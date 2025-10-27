@@ -14,8 +14,10 @@ from ray import Ray, Rays
 from graph import Graph
 
 GRID_SIZE = 200
-VOXEL_SIZE = 1.0
+VOXEL_SIZE = 10.0
 START_FRAME = 0
+EPS_ADJACENT = VOXEL_SIZE
+EPS_CORNER = math.sqrt(3) * VOXEL_SIZE
 
 def process_camera(cam: Camera, vt: VoxelTracer, queue: Queue) -> None:
     vr = VideoReader(cam.video, cpu(0))
@@ -91,7 +93,7 @@ def process_collector(num_processes: int, input: Queue, output: Queue, vt: Voxel
         except KeyError:
             continue
 
-def get_cluster_centers(data: np.ndarray) -> np.ndarray:
+def get_cluster_centers(data: np.ndarray, eps: float) -> np.ndarray | None:
     """Return an array of all cluster centers in a dataset
 
     Args:
@@ -99,14 +101,16 @@ def get_cluster_centers(data: np.ndarray) -> np.ndarray:
         data points and M is the dimension
     """
     centers = []
-    clust = DBSCAN(eps=VOXEL_SIZE, min_samples=2)
+    clust = DBSCAN(eps=eps, min_samples=10)
     clust.fit(data)
 
     for klass in range(clust.labels_.max() + 1):
         centroid = np.mean(data[clust.labels_ == klass], axis=0)
         centers.append(centroid)
 
-    return np.vstack(centers)
+    if len(centers) > 0:
+        return np.vstack(centers)
+    return None
 
 def _multiprocess(cams: list[Camera], input: Queue, output: Queue, vt: VoxelTracer) -> Callable:
     processes = [Process(target=process_camera, args=(cam, vt, input)) for cam in cams]
@@ -132,17 +136,31 @@ def _singlethreaded(cams: list[Camera], input: Queue, output: Queue, vt: VoxelTr
     process_collector(len(cams), input, output, vt)
     
 def main():
+    '''
     cam_L = Camera((39.694, -211.93, 1.111), 
                    (94.8, 0.000014, 13.6), 
-                   "./videos/cam_L.mkv",
+                   "./videos/test1/cam_L.mkv",
                    39.6)
     cam_R = Camera((72.616, 62.409, 0.047733), 
                    (90.267, -0.000012, 128.27), 
-                   "./videos/cam_R.mkv",
+                   "./videos/test1/cam_R.mkv",
                    39.6)
     cam_F = Camera((-133.461, 78.7308, 57.4486),
                    (69.5268, 0.000026, -120.23),
-                   './videos/cam_F.mkv',
+                   './videos/test1/cam_F.mkv',
+                   39.6)
+    '''
+    cam_L = Camera((-354.58, 597.91, 12.217), 
+                   (88.327, -0.000009, 204.57), 
+                   "./videos/test2/cam_L.mkv",
+                   39.6)
+    cam_R = Camera((-664.41, -478.9, 267.55), 
+                   (72.327, 0.000007, -67.43), 
+                   "./videos/test2/cam_R.mkv",
+                   39.6)
+    cam_F = Camera((817.69, -170.64, 211.13),
+                   (72.327, -0.00002, -280.23),
+                   './videos/test2/cam_F.mkv',
                    39.6)
     cams = [cam_L, cam_R, cam_F]
     input = Queue()
@@ -150,8 +168,8 @@ def main():
     vt = VoxelTracer(GRID_SIZE, VOXEL_SIZE)
     graph = Graph()
 
-    # _singlethreaded(cams, input, output, vt)
-    end_processes = _multiprocess(cams, input, output, vt)
+    _singlethreaded(cams, input, output, vt)
+    # end_processes = _multiprocess(cams, input, output, vt)
 
     for cam in cams:
         cam_rot = rotationMatrix(*cam.rotation)
@@ -169,16 +187,17 @@ def main():
             if frame is None: break
             graph.add_voxels(voxel_grid_state, vt.voxel_origin, VOXEL_SIZE)
             graph.update()
+            motion_voxels = graph.extract_percentile_index(voxel_grid_state, 99.9)
+            centers = get_cluster_centers(np.transpose(motion_voxels), EPS_CORNER)
+            if centers is not None:
+                print(vt.grid_to_voxel(centers))
             # graph.write_frame()
-            # motion_voxels = graph.extract_percentile_index(voxel_grid_state, 99.9)
-            # centers = get_cluster_centers(np.transpose(motion_voxels))
-            # print(vt.grid_to_voxel(centers))
         except Empty:
             continue
     
     # graph.close_gif()
 
-    end_processes()
+    # end_processes()
 
 
 @njit

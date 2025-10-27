@@ -49,14 +49,15 @@ class Graph:
     def add_ray(self, ray: Ray, color: str, reversed=False) -> None:
         if not SHOW_RAY: return
         rev = -1 if reversed else 1
-        line = pv.Line(ray.origin, ray.origin + ray.norm_dir * 300 * rev)
+        line = pv.Line(ray.origin, ray.origin + ray.norm_dir * 1000 * rev)
         self.plotter.add_mesh(line, 
                               color=color, 
                               line_width=2,
                               reset_camera=False)      
         
-    def extract_percentile_index(self, data: np.ndarray, percentile: float):
-        """Returns the indices of all data points above a certain percentile"""
+    def extract_percentile_index(self, data: np.ndarray, percentile: float) -> tuple:
+        """Returns x, y, z arrays containing the indices of nonzero data points
+        above a certain percentile."""
         p = np.percentile(data[data != 0], percentile)
         return np.nonzero(data >= p)
     

@@ -7,6 +7,11 @@
 *.o
 *.obj
 
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[codz]
+*$py.class
+
 # Precompiled Headers
 *.gch
 *.pch
@@ -39,3 +44,6 @@
 
 # debug information files
 *.dwo
+
+# Simulation Data
+videos/
