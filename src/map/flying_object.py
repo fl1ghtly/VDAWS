@@ -1,6 +1,6 @@
 
 class FlyingObject:
-    def __init__(self, id: str, x: float, y: float, altitude: float)
+    def __init__(self, id: str, x: float, y: float, altitude: float):
         self.id = id
         self.x = x
         self.y = y
@@ -19,7 +19,14 @@ class FlyingObject:
     
     
     @classmethod
-    def create(cls, x: float, y: float, altitude: float):
-        return cls(x, y, altitude)
+    def create_with_id(cls, id: str, x: float, y: float, altitude: float):
+        return cls(id, x, y, altitude)
+    
+    @classmethod
+    def create_auto_id(cls, x: float, y: float, altitude: float):
+        import uuid
+        generated_id = str(uuid.uuid4())
+        return cls(generated_id, x, y, altitude)
+
     
     
