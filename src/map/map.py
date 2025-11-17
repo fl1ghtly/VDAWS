@@ -1,96 +1,159 @@
 import dash
-from dash import dcc
-from dash import html
+from dash import dcc, html, Input, Output, State
 import plotly.graph_objects as go
 import numpy as np
+import math
+import time
+import uuid
 
-class FlyingObject:
-    def __init__(self, name, lat, lon, altitude):
-        self.name = name
-        self.lat = lat
-        self.lon = lon
-        self.altitude = altitude
+# --- IMPORT FROM YOUR FILE ---
+from flying_object import FlyingObject
 
-#Data Preparation
-flying_objects = [
-    FlyingObject("Drone1", 37.7749, -122.4194, 100),
-    FlyingObject("Drone2", 37.7849, -122.4094, 300),
-    FlyingObject("Drone3", 37.7649, -122.4294, 600),
-]
+# --- HELPER FUNCTIONS ---
+def serialize_drone(drone_obj):
+    # FlyingObject now handles type safety internally, so this is safe
+    return {
+        "id": drone_obj.id,
+        "position": drone_obj.position,
+        "velocity": drone_obj.velocity,
+        "lastHeartbeat": drone_obj.lastHeartbeat
+    }
+
+def deserialize_drone(data_dict):
+    return FlyingObject(
+        id=data_dict["id"],
+        position=tuple(data_dict["position"]),
+        velocity=tuple(data_dict["velocity"]),
+        lastHeartbeat=data_dict["lastHeartbeat"]
+    )
+
+# --- SIMULATION SETUP ---
 boundary_coords = [
     [37.70, -122.52], [37.70, -122.35], [37.83, -122.35],
     [37.83, -122.52], [37.70, -122.52]
 ]
-altitudes = [obj.altitude for obj in flying_objects]
-lats = [obj.lat for obj in flying_objects]
-lons = [obj.lon for obj in flying_objects]
-texts = [f"{obj.name}: {obj.altitude}m" for obj in flying_objects]
-min_alt, max_alt = min(altitudes), max(altitudes)
-center_lat = (boundary_coords[0][0] + boundary_coords[2][0]) / 2
-center_lon = (boundary_coords[0][1] + boundary_coords[1][1]) / 2
+lats = [p[0] for p in boundary_coords]
+lons = [p[1] for p in boundary_coords]
+CENTER_LAT = (min(lats) + max(lats)) / 2
+CENTER_LON = (min(lons) + max(lons)) / 2
 
-# Convert Boundary to GeoJSON Format
-boundary_geojson_coords = [[lon, lat] for lat, lon in boundary_coords]
 geojson_boundary = {
     "type": "Feature",
-    "geometry": {"type": "Polygon", "coordinates": [boundary_geojson_coords]}
+    "geometry": {"type": "LineString", "coordinates": [[lon, lat] for lat, lon in boundary_coords]}
 }
 
-#Create the Plotly Figure
-fig = go.Figure()
+TOTAL_FRAMES = 100
+PATH_MOVEMENT_SCALE = 1.5 
 
-#Add Flying Object Scattermap
-fig.add_trace(go.Scattermap(
-    lat=lats,
-    lon=lons,
-    mode='markers',
-    marker=go.scattermap.Marker(
-        size=12,
-        color=altitudes,
-        colorscale='Jet',
-        cmin=min_alt,
-        cmax=max_alt,
-        showscale=True,
-        colorbar=dict(title='Altitude (m)')
-    ),
-    text=texts,
-    hoverinfo='text'
-))
+def generate_path_coordinates(steps):
+    paths = [[], [], []]
+    radius = 0.03 * PATH_MOVEMENT_SCALE
+    for i in range(steps):
+        t = i / steps 
+        angle = t * 2 * np.pi
+        paths[0].append((CENTER_LAT + radius * np.sin(angle), CENTER_LON + radius * np.cos(angle), 100))
+        scale = radius * 1.5
+        d2_lat = CENTER_LAT + (scale * np.sin(angle) * np.cos(angle)) / (1 + np.sin(angle)**2)
+        d2_lon = CENTER_LON + (scale * np.cos(angle)) / (1 + np.sin(angle)**2)
+        paths[1].append((d2_lat, d2_lon, 500))
+        paths[2].append((CENTER_LAT + (radius * 1.5 * np.sin(angle)), CENTER_LON - 0.04, 800))
+    return paths
 
-#Update Map Layout
-fig.update_layout(
-    title='Flying Object Tracker',
-    
-    
-    mapbox=dict(
-        
-        style='open-street-map', 
-        
-        center=go.layout.mapbox.Center(lat=center_lat, lon=center_lon), 
-        
-        zoom=12,
-        layers=[
-            {"source": geojson_boundary, "type": "fill", "color": "blue", "opacity": 0.1},
-            {"source": geojson_boundary, "type": "line", "color": "blue", "line": {"width": 2}}
-        ]
-    ),
-    margin={"r":0, "t":40, "l":0, "b":0}
-)
+path_data = generate_path_coordinates(TOTAL_FRAMES)
 
-#Initialize the Dash App
+# --- INITIALIZATION ---
+current_time = int(time.time())
+initial_drones_objs = [
+    FlyingObject.create_with_id(uuid.uuid4().int & (1<<32)-1, CENTER_LAT, CENTER_LON, 100.0, 0.0, 0.0, 0.0, current_time),
+    FlyingObject.create_with_id(uuid.uuid4().int & (1<<32)-1, CENTER_LAT, CENTER_LON, 500.0, 0.0, 0.0, 0.0, current_time),
+    FlyingObject.create_with_id(uuid.uuid4().int & (1<<32)-1, CENTER_LAT, CENTER_LON, 800.0, 0.0, 0.0, 0.0, current_time)
+]
+initial_drone_dicts = [serialize_drone(d) for d in initial_drones_objs]
+
+# --- DASH APP ---
 app = dash.Dash(__name__)
 
-#Define the App Layout
-app.layout = html.Div(children=[
-    html.H1(children='Dash Flying Object Map'),
-    html.Div(children='A map showing flying objects, using Plotly Dash.'),
-    dcc.Graph(
-        id='map-graph',
-        figure=fig,
-        style={'height': '80vh'}
-    )
+app.layout = html.Div([
+    dcc.Graph(id='map-graph', style={'height': '100vh'}),
+    dcc.Interval(id='interval-component', interval=200, n_intervals=0),
+    dcc.Store(id='drone-store', data=initial_drone_dicts)
 ])
 
-#Run the App
+@app.callback(
+    [Output('map-graph', 'figure'),
+     Output('drone-store', 'data')],
+    Input('interval-component', 'n_intervals'),
+    State('drone-store', 'data')
+)
+def update_simulation_and_map(n, current_drone_dicts):
+    print(f"Updating Frame: {n % TOTAL_FRAMES}")
+
+    if not current_drone_dicts:
+        current_drone_dicts = initial_drone_dicts
+
+    active_drones = [deserialize_drone(d) for d in current_drone_dicts]
+    frame_idx = n % TOTAL_FRAMES
+    next_frame_idx = (n + 1) % TOTAL_FRAMES
+    
+    # Update Physics
+    for i, drone in enumerate(active_drones):
+        target_pos = path_data[i][frame_idx]
+        future_pos = path_data[i][next_frame_idx]
+        
+        vx = future_pos[1] - target_pos[1] 
+        vy = future_pos[0] - target_pos[0]
+        
+        # Now safe because FlyingObject converts them to float internally
+        drone.set_velocity(vx, vy, 0.0)
+        drone.set_position(target_pos[0], target_pos[1], target_pos[2])
+
+    node_lats, node_lons = [], []
+    altitudes, texts = [], []
+    
+    for drone in active_drones:
+        node_lats.append(drone.x)
+        node_lons.append(drone.y)
+        altitudes.append(drone.altitude)
+        texts.append(f"ID: {drone.id}<br>Lat: {drone.x:.4f}<br>Lon: {drone.y:.4f}")
+
+    fig = go.Figure()
+
+    # NODES
+    fig.add_trace(go.Scattermapbox(
+        lat=node_lats, 
+        lon=node_lons, 
+        mode='markers', 
+        text=texts,
+        marker=go.scattermapbox.Marker(
+            size=20,
+            color=altitudes, 
+            colorscale='Jet', 
+            cmin=0, cmax=1000
+        ),
+        hoverinfo='text'
+    ))
+
+    fig.update_layout(
+        # Force Redraw using datarevision
+        datarevision=n,
+        mapbox=dict(
+            style='open-street-map',
+            center=dict(lat=CENTER_LAT, lon=CENTER_LON),
+            zoom=11,
+            layers=[{
+                "source": geojson_boundary,
+                "type": "line", 
+                "color": "red",       
+                "line": {"width": 5}
+            }]
+        ),
+        margin={"r":0, "t":0, "l":0, "b":0},
+        showlegend=False,
+        uirevision='constant_loop' 
+    )
+    
+    updated_drone_dicts = [serialize_drone(d) for d in active_drones]
+    return fig, updated_drone_dicts
+
 if __name__ == '__main__':
     app.run(debug=True)

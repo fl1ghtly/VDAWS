@@ -1,5 +1,5 @@
 import sys
-import pyshark  # <-- Make sure to 'pip install pyshark'
+import pyshark 
 
 def main():
     print("Starting Pyshark sniffer...")
