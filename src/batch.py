@@ -9,7 +9,7 @@ class Batcher:
     
     def batch(self) -> list[RawSensorData]:
         output: list[RawSensorData] = []
-        row_ids: list[int] = []
+        delete_ids: list[tuple[int]] = []
         try:
             with sqlite3.connect(self.db_path) as connection:
                 # Convert cursor output into a dictionary instead of tuple
@@ -26,7 +26,7 @@ class Batcher:
 
                 timestamps: list[float] = []
                 for row in cursor:
-                    row_ids.append(row['RowID'])
+                    delete_ids.append((row['RowID'],))
                     timestamps.append(row['Timestamp'])
                     output.append(RawSensorData(
                         row['CameraID'],
@@ -38,11 +38,13 @@ class Batcher:
                     ))
                     
                 left, right = find_largest_window_in_threshold(timestamps, self.threshold)
-                output = output[left : right + 1]
+                # Select only the rows that are in the window
+                output = output[left:right + 1]
+                # Delete all rows used in the window AND delete all rows that are less than the minimum timestamp in the window
+                delete_ids = delete_ids[:right + 1]
                 
-                # TODO also delete all rows where the timestamp is less than the left most timestamp of the window
                 # Delete rows
-                # cursor.execute('DELETE FROM SensorData WHERE RowID = ?', (row_ids,))
+                cursor.executemany('DELETE FROM SensorData WHERE RowID = ?', delete_ids)
         except sqlite3.Error as e:
             print(f'Error {e} occurred')
         finally:
