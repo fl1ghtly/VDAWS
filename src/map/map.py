@@ -1,30 +1,32 @@
 import dash
 from dash import dcc, html, Input, Output, State
+import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 import math
 import time
 import uuid
+import traceback
+import pandas as pd  # px works best with pandas or dicts
 
 # --- IMPORT FROM YOUR FILE ---
 from flying_object import FlyingObject
 
 # --- HELPER FUNCTIONS ---
 def serialize_drone(drone_obj):
-    # FlyingObject now handles type safety internally, so this is safe
     return {
-        "id": drone_obj.id,
-        "position": drone_obj.position,
-        "velocity": drone_obj.velocity,
-        "lastHeartbeat": drone_obj.lastHeartbeat
+        "id": int(drone_obj.id),
+        "position": [float(x) for x in drone_obj.position],
+        "velocity": [float(x) for x in drone_obj.velocity],
+        "lastHeartbeat": int(drone_obj.lastHeartbeat)
     }
 
 def deserialize_drone(data_dict):
     return FlyingObject(
-        id=data_dict["id"],
+        id=int(data_dict["id"]),
         position=tuple(data_dict["position"]),
         velocity=tuple(data_dict["velocity"]),
-        lastHeartbeat=data_dict["lastHeartbeat"]
+        lastHeartbeat=int(data_dict["lastHeartbeat"])
     )
 
 # --- SIMULATION SETUP ---
@@ -37,10 +39,11 @@ lons = [p[1] for p in boundary_coords]
 CENTER_LAT = (min(lats) + max(lats)) / 2
 CENTER_LON = (min(lons) + max(lons)) / 2
 
-geojson_boundary = {
-    "type": "Feature",
-    "geometry": {"type": "LineString", "coordinates": [[lon, lat] for lat, lon in boundary_coords]}
-}
+# Define coordinates for the boundary line to plot separately
+boundary_df = pd.DataFrame({
+    'lat': [p[0] for p in boundary_coords],
+    'lon': [p[1] for p in boundary_coords]
+})
 
 TOTAL_FRAMES = 100
 PATH_MOVEMENT_SCALE = 1.5 
@@ -86,74 +89,129 @@ app.layout = html.Div([
     State('drone-store', 'data')
 )
 def update_simulation_and_map(n, current_drone_dicts):
-    print(f"Updating Frame: {n % TOTAL_FRAMES}")
+    try:
+        if not current_drone_dicts:
+            current_drone_dicts = initial_drone_dicts
 
-    if not current_drone_dicts:
-        current_drone_dicts = initial_drone_dicts
-
-    active_drones = [deserialize_drone(d) for d in current_drone_dicts]
-    frame_idx = n % TOTAL_FRAMES
-    next_frame_idx = (n + 1) % TOTAL_FRAMES
-    
-    # Update Physics
-    for i, drone in enumerate(active_drones):
-        target_pos = path_data[i][frame_idx]
-        future_pos = path_data[i][next_frame_idx]
+        active_drones = [deserialize_drone(d) for d in current_drone_dicts]
+        frame_idx = int(n) % TOTAL_FRAMES
+        next_frame_idx = (int(n) + 1) % TOTAL_FRAMES
         
-        vx = future_pos[1] - target_pos[1] 
-        vy = future_pos[0] - target_pos[0]
+        print(f"Processing Frame: {frame_idx}")
+
+        # --- Physics Update ---
+        for i, drone in enumerate(active_drones):
+            target_pos = path_data[i][frame_idx]
+            future_pos = path_data[i][next_frame_idx]
+            vx = future_pos[1] - target_pos[1] 
+            vy = future_pos[0] - target_pos[0]
+            drone.set_velocity(vx, vy, 0.0)
+            drone.set_position(target_pos[0], target_pos[1], target_pos[2])
+
+        # --- Data Prep for Plotly Express ---
+        # We use lists of dictionaries for easy DataFrame creation
+        node_data = []
+        arrow_data = []
         
-        # Now safe because FlyingObject converts them to float internally
-        drone.set_velocity(vx, vy, 0.0)
-        drone.set_position(target_pos[0], target_pos[1], target_pos[2])
+        ARROW_START_OFFSET_DEG = 0.00025 
+        LON_SCALE = 1.0 / math.cos(math.radians(CENTER_LAT))
 
-    node_lats, node_lons = [], []
-    altitudes, texts = [], []
-    
-    for drone in active_drones:
-        node_lats.append(drone.x)
-        node_lons.append(drone.y)
-        altitudes.append(drone.altitude)
-        texts.append(f"ID: {drone.id}<br>Lat: {drone.x:.4f}<br>Lon: {drone.y:.4f}")
+        for drone in active_drones:
+            d_lat = float(drone.x)
+            d_lon = float(drone.y)
+            d_alt = float(drone.altitude)
+            vx = float(drone.velocity[0])
+            vy = float(drone.velocity[1])
+            
+            # 1. Node Info
+            node_data.append({
+                'lat': d_lat,
+                'lon': d_lon,
+                'alt': d_alt,
+                'id': str(drone.id),
+                'size': 15
+            })
 
-    fig = go.Figure()
+            # 2. Arrow Info
+            speed_mag = math.sqrt(vx**2 + vy**2) * 100000 
+            
+            if speed_mag > 0:
+                norm_vx = vx / math.sqrt(vx**2 + vy**2)
+                norm_vy = vy / math.sqrt(vx**2 + vy**2)
+                head_lat = d_lat + (norm_vy * ARROW_START_OFFSET_DEG)
+                head_lon = d_lon + (norm_vx * ARROW_START_OFFSET_DEG * LON_SCALE)
+            else:
+                head_lat = d_lat
+                head_lon = d_lon
+                
+            arrow_data.append({
+                'lat': head_lat,
+                'lon': head_lon,
+                'speed': float(speed_mag),
+                'size': 8
+            })
 
-    # NODES
-    fig.add_trace(go.Scattermapbox(
-        lat=node_lats, 
-        lon=node_lons, 
-        mode='markers', 
-        text=texts,
-        marker=go.scattermapbox.Marker(
-            size=20,
-            color=altitudes, 
-            colorscale='Jet', 
-            cmin=0, cmax=1000
-        ),
-        hoverinfo='text'
-    ))
+        # Create DataFrames
+        df_nodes = pd.DataFrame(node_data)
+        df_arrows = pd.DataFrame(arrow_data)
 
-    fig.update_layout(
-        # Force Redraw using datarevision
-        datarevision=n,
-        mapbox=dict(
-            style='open-street-map',
-            center=dict(lat=CENTER_LAT, lon=CENTER_LON),
+        # --- Build Figure with PX ---
+        # 1. Create Base Map with Nodes
+        fig = px.scatter_mapbox(
+            df_nodes, 
+            lat="lat", 
+            lon="lon", 
+            color="alt",
+            size="size",
+            size_max=15,
+            color_continuous_scale="Jet",
+            range_color=[0, 1000],
+            hover_data=["id", "alt"],
             zoom=11,
-            layers=[{
-                "source": geojson_boundary,
-                "type": "line", 
-                "color": "red",       
-                "line": {"width": 5}
-            }]
-        ),
-        margin={"r":0, "t":0, "l":0, "b":0},
-        showlegend=False,
-        uirevision='constant_loop' 
-    )
-    
-    updated_drone_dicts = [serialize_drone(d) for d in active_drones]
-    return fig, updated_drone_dicts
+            center={"lat": CENTER_LAT, "lon": CENTER_LON}
+        )
+
+        # 2. Add Arrows manually (as PX is best for single traces)
+        # We use go.Scattermapbox to overlay the velocity heads
+        fig.add_trace(go.Scattermapbox(
+            lat=df_arrows['lat'],
+            lon=df_arrows['lon'],
+            mode='markers',
+            marker=go.scattermapbox.Marker(
+                size=10,
+                color=df_arrows['speed'],
+                colorscale='Viridis',
+                cmin=0, cmax=600,
+                showscale=False
+            ),
+            hoverinfo='skip' # Skip hover for arrows to reduce clutter
+        ))
+
+        # 3. Add Boundary Line
+        fig.add_trace(go.Scattermapbox(
+            lat=boundary_df['lat'],
+            lon=boundary_df['lon'],
+            mode='lines',
+            line=dict(width=4, color='red'),
+            hoverinfo='skip'
+        ))
+
+        # 4. Update Layout settings
+        fig.update_layout(
+            mapbox_style="open-street-map",
+            margin={"r":0, "t":0, "l":0, "b":0},
+            showlegend=False,
+            # CRITICAL: Keeps the map from resetting zoom every frame
+            uirevision='constant_loop' 
+        )
+        
+        updated_drone_dicts = [serialize_drone(d) for d in active_drones]
+        return fig, updated_drone_dicts
+
+    except Exception as e:
+        print("CRASH DETECTED:")
+        traceback.print_exc()
+        return dash.no_update, dash.no_update
 
 if __name__ == '__main__':
     app.run(debug=True)
