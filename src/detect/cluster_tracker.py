@@ -1,4 +1,5 @@
 import numpy as np
+from sklearn.cluster import DBSCAN
 
 class ClusterTracker:
     #  {id: (age, clusters)}
@@ -13,42 +14,47 @@ class ClusterTracker:
         self.next_object_id = 0
         self.max_distance = max_distance
         self.max_age = max_age
-        self.current_time = 0
+        self.frame_count = 0
         
-    def track_clusters(self, centroids: np.ndarray) -> list[int]:
+    def track_clusters(self, centroids: np.ndarray, timestamp: float) -> list[int]:
         '''
         Returns a list of cluster IDs that are moving
         '''
-        updated_cluster_hist_slice: list[int] = []
+        updated_ids: list[int] = []
         for centroid in centroids:
-            best_match: int | None = None
+            best_id_match: int | None = None
             min_distance = float('inf')
             
             # Check the last position of every centroid and get the best match
-            for hist_id, hist_centroid in self.cluster_history.items():
-                    last_centroid = hist_centroid['centroids'][-1]
+            for hist_id, hist in self.cluster_history.items():
+                    last_centroid = hist['centroids'][-1]
                     distance = np.linalg.norm(centroid - last_centroid)
                     
                     if distance < min_distance and distance < self.max_distance:
                         min_distance = distance
-                        best_match = hist_id
+                        best_id_match = hist_id
                         
-            if best_match is not None:  # Update old centroid
-                self.cluster_history[best_match]['timestamp'].append(self.current_time)
-                self.cluster_history[best_match]['centroids'].append(centroid)
-                updated_cluster_hist_slice.append(best_match)
+            if best_id_match is not None:  # Update old centroid
+                self.cluster_history[best_id_match]['timestamp'].append(timestamp)
+                self.cluster_history[best_id_match]['centroids'].append(centroid)
+                self.cluster_history[best_id_match]['last_updated'] = self.frame_count
+                updated_ids.append(best_id_match)
             else:   # New centroid
-                self.cluster_history[self.next_object_id] = {'timestamp': [self.current_time], 'centroids': [centroid]}
-                updated_cluster_hist_slice.append(self.next_object_id)
+                self.cluster_history[self.next_object_id] = {
+                    'timestamp': [timestamp], 
+                    'centroids': [centroid],
+                    'last_updated': self.frame_count
+                    }
+                updated_ids.append(self.next_object_id)
                 self.next_object_id += 1
                 
-        self.current_time += 1
-        return updated_cluster_hist_slice
+        self.frame_count += 1
+        return updated_ids
     
     def cleanup_old_clusters(self) -> None:
         remove: list[int] = []
         for hist_id, hist_centroid in self.cluster_history.items():
-            if (self.current_time - hist_centroid['timestamp'][-1] > self.max_age): remove.append(hist_id)
+            if (self.frame_count - hist_centroid['last_updated'] > self.max_age): remove.append(hist_id)
                 
         for id in remove:
             del self.cluster_history[id]
@@ -67,6 +73,31 @@ class ClusterTracker:
             
         return velocities
     
+    def get_cluster_position(self, ids: list[int]) -> dict[int, np.ndarray]:
+        pos = {}
+        for id in ids:
+            pos[id] = self.cluster_history[id]['centroids']
+        return pos
+    
+def get_cluster_centers(data: np.ndarray, eps: float) -> np.ndarray | None:
+    """Return an array of all cluster centers in a dataset
+
+    Args:
+        data (np.ndarray): (N, M) array where N is the number of 
+        data points and M is the dimension
+    """
+    centers = []
+    clust = DBSCAN(eps=eps, min_samples=3)
+    clust.fit(data)
+
+    for klass in range(clust.labels_.max() + 1):
+        centroid = np.mean(data[clust.labels_ == klass], axis=0)
+        centers.append(centroid)
+
+    if len(centers) > 0:
+        return np.vstack(centers)
+    return None
+
 if __name__ == '__main__':
     tracker = ClusterTracker(10.0, 3)
     
