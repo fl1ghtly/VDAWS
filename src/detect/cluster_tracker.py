@@ -79,7 +79,7 @@ class ClusterTracker:
             pos[id] = self.cluster_history[id]['centroids']
         return pos
     
-def get_cluster_centers(data: np.ndarray, eps: float) -> np.ndarray | None:
+def get_cluster_centers(data: np.ndarray, eps: float) -> np.ndarray:
     """Return an array of all cluster centers in a dataset
 
     Args:
@@ -96,7 +96,7 @@ def get_cluster_centers(data: np.ndarray, eps: float) -> np.ndarray | None:
 
     if len(centers) > 0:
         return np.vstack(centers)
-    return None
+    return np.array([])
 
 if __name__ == '__main__':
     tracker = ClusterTracker(10.0, 3)
