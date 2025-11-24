@@ -1,46 +1,88 @@
 import math
-import numpy as np
 import cv2
-
-class Camera:
-    """Mimic real world camera data for testing purposes"""
-    position: np.ndarray
-    # Rotation in radians
-    rotation: np.ndarray
-    # FOV in degrees
-    fov: float
-    video: str
-    height: int
-    width: int
-    pixel_delta_u: np.ndarray
-    pixel_delta_v: np.ndarray
-    pixel00_loc: np.ndarray
+import numpy as np
+from models.sensor_data import RawSensorData, CameraData
+from numba import njit
+from detect.ray import Rays
+        
+def process_camera(rawData: RawSensorData):
+    height, width, _ = cv2.imread(rawData.image_path).shape
     
-    def __init__(self, position: tuple[float, float, float], rotation: tuple[float, float, float], video: str, fov: float):
-        self.position = np.array(position)
-        deg2rad = np.vectorize(math.radians)
-        self.rotation = deg2rad(rotation)
-        self.video = video
-        self.fov = fov
-        
-        # Get frame data
-        cap = cv2.VideoCapture(video)
-        self.height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self.width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        cap.release()
-        
-        # Calculate camera constants
-        focal_length = (self.width / 2) / math.tan(math.radians(fov) / 2)
-        h = math.tan(math.radians(fov) / 2)
-        # Viewport height constant is an arbitrary value
-        viewport_height = 1.0 * h * focal_length
-        viewport_width = viewport_height * self.width / self.height
+    # Calculate camera constants
+    focal_length = (width / 2) / math.tan(math.radians(rawData.fov) / 2)
+    h = math.tan(math.radians(rawData.fov) / 2)
+    # Viewport height constant is an arbitrary value
+    viewport_height = 1.0 * h * focal_length
+    viewport_width = viewport_height * width / height
 
-        viewport_u = np.array((viewport_width, 0, 0))
-        viewport_v = np.array((0, -viewport_height, 0))
-        
-        self.pixel_delta_u = viewport_u / self.width
-        self.pixel_delta_v = viewport_v / self.height
-        
-        viewport_upper_left = self.position - np.array((0, 0, focal_length)) - viewport_u / 2 - viewport_v / 2
-        self.pixel00_loc = viewport_upper_left + 0.5 * (self.pixel_delta_u + self.pixel_delta_v)
+    viewport_u = np.array((viewport_width, 0, 0))
+    viewport_v = np.array((0, -viewport_height, 0))
+    
+    pixel_delta_u = viewport_u / width
+    pixel_delta_v = viewport_v / height
+    
+    viewport_upper_left = rawData.position - np.array((0, 0, focal_length)) - viewport_u / 2 - viewport_v / 2
+    pixel00_loc = viewport_upper_left + 0.5 * (pixel_delta_u + pixel_delta_v)
+    
+    return CameraData(
+        rawData.cam_id, 
+        rawData.timestamp, 
+        np.vectorize(math.radians)(rawData.rotation),
+        rawData.position,
+        rawData.image_path,
+        rawData.fov,
+        pixel_delta_u,
+        pixel_delta_v,
+        pixel00_loc
+    )
+
+def get_camera_rays(cam: CameraData, motion_mask: np.ndarray) -> Rays:
+    ind = cv2.findNonZero(motion_mask)
+    # Skip frames without motion
+    if ind is None: return    
+
+    # Get camera direction vector
+    cam_rot = rotationMatrix(*cam.rotation)
+    
+    ind = ind.squeeze()
+    ind = ind.reshape((-1, 2))  # Handle cases with only 1 coordinate pair
+    # Get the x and y coordinate of each pixel
+    x = ind[:, 0]
+    y = ind[:, 1]
+
+    #  Get the direction vector from camera origin to pixel
+    pixel_centers = (cam.pixel00_loc 
+                    + (ind[..., 0:1] * cam.pixel_delta_u) 
+                    + (ind[..., 1:2] * cam.pixel_delta_v))
+    pixel_dirs = (pixel_centers - cam.position) @ cam_rot.T
+
+    # Batch all direction vectors together
+    rays = Rays(np.tile(cam.position, (len(pixel_dirs), 1)), pixel_dirs, motion_mask[y, x]) # type: ignore
+    return rays
+    
+@njit
+def rotationMatrix(x: float, y: float, z: float) -> np.ndarray:
+    """Converts from Euler Angles (XYZ order) to a rotation matrix"""
+    # Calculate trig values once
+    cx = math.cos(x)
+    sx = math.sin(x)
+    cy = math.cos(y)
+    sy = math.sin(y)
+    cz = math.cos(z)
+    sz = math.sin(z)
+
+    # Form individual rotation matrices
+    rx = np.array([[1., 0., 0.],
+                    [0., cx, -sx],
+                    [0., sx, cx]])
+    ry = np.array([[cy, 0., sy],
+                    [0., 1., 0.],
+                    [-sy,   0., cy]])
+    rz = np.array([[cz, -sz, 0.],
+                    [sz, cz, 0.],
+                    [0., 0., 1.]])
+
+    # Form the final rotation matrix
+    r = rz @ ry @ rx
+
+    return r

@@ -1,6 +1,6 @@
 import numpy as np
 from numba import njit
-from ray import Ray, Rays
+from detect.ray import Ray, Rays
 
 MAX_RAY_STEPS = 512
 class VoxelTracer:

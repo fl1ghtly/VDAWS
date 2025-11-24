@@ -3,7 +3,9 @@ from cv2 import typing
 
 def filter_motion(prevFrame: typing.MatLike, nextFrame: typing.MatLike, threshold: int) -> typing.MatLike:
     """Returns a mask that contains the motion difference between two frames"""
-    motion_mask = nextFrame - prevFrame
+    prev = cv2.cvtColor(prevFrame, cv2.COLOR_BGR2GRAY)
+    next = cv2.cvtColor(nextFrame, cv2.COLOR_BGR2GRAY)
+    motion_mask = next - prev
     _, motion_mask = cv2.threshold(motion_mask, threshold, 255, cv2.THRESH_BINARY)
     
     return motion_mask

@@ -1,6 +1,6 @@
 import pyvista as pv
 import numpy as np
-from ray import Ray
+from detect.ray import Ray
 
 SHOW_GRID = False
 SHOW_RAY = True
