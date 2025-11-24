@@ -1,76 +1,125 @@
 import dash
-from dash import dcc, html, Input, Output, State
+from dash import dcc, html, Input, Output
 import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
 import math
 import sys
 import os
+import numpy as np
+import uuid
+import time
 
-# --- IMPORT PATH ---
-# Get the current file's directory: .../VDAWS/src/map
+# --- FIX IMPORT PATH ---
+# Get current directory: .../VDAWS/src/map
 current_dir = os.path.dirname(os.path.abspath(__file__))
-# Go up one level: .../VDAWS/src
-src_dir = os.path.dirname(current_dir)
-# Go up another level: .../VDAWS (Project Root)
-project_root = os.path.dirname(src_dir)
-
-# Add Project Root to path so "import src.scanning..." works
+# Get project root: .../VDAWS
+project_root = os.path.dirname(os.path.dirname(current_dir))
+# Add to path
 sys.path.append(project_root)
 
 # Local Imports
-# Assuming map.py, flying_object.py, and object_manager.py are in src/map/
-from object_manager import ObjectManager
-# Assuming remoteid_sniffer.py is in src/scanning/
+from src.map.object_manager import ObjectManager
+from src.map.flying_object import FlyingObject
 from src.scanning.remoteid_sniffer import run_sniffer_thread
 
-# --- SETUP ---
+# --- CONFIGURATION ---
+WIFI_INTERFACE = 'Wi-Fi'  # Change to 'wlan0' or 'en0' if on Linux/Mac
 
-# 1. CONFIGURATION
-# *** CHANGE THIS TO YOUR WIFI ADAPTER NAME ***
-# Windows: usually 'Wi-Fi' or 'Ethernet'
-# Linux/Mac: usually 'wlan0', 'mon0', or 'en0'
-WIFI_INTERFACE = 'Wi-Fi' 
+# --- 1. LIVE TRACKING SETUP ---
+manager = ObjectManager(timeout_seconds=5)
+run_sniffer_thread(manager, interface=WIFI_INTERFACE)
 
-# 2. Initialize the Manager (The "Database")
-# Drones disappear from map if no signal for 10 seconds
-manager = ObjectManager(timeout_seconds=10)
+# --- 2. SIMULATION SETUP (Restored) ---
+# Center Map (San Francisco for simulation)
+CENTER_LAT = 37.76
+CENTER_LON = -122.43
 
-# 3. Start the Sniffer (The "Producer")
-# This runs in the background and feeds data into 'manager'
-run_sniffer_thread(manager, interface=WIFI_INTERFACE) 
+TOTAL_FRAMES = 100
+PATH_MOVEMENT_SCALE = 1.5 
+
+def generate_path_coordinates(steps):
+    paths = [[], [], []]
+    radius = 0.01 * PATH_MOVEMENT_SCALE # Reduced radius slightly for better zoom
+    for i in range(steps):
+        t = i / steps 
+        angle = t * 2 * np.pi
+        
+        # Drone 1: Circle
+        paths[0].append((CENTER_LAT + radius * np.sin(angle), CENTER_LON + radius * np.cos(angle), 100))
+        
+        # Drone 2: Figure 8
+        scale = radius * 1.5
+        d2_lat = CENTER_LAT + (scale * np.sin(angle) * np.cos(angle)) / (1 + np.sin(angle)**2)
+        d2_lon = CENTER_LON + (scale * np.cos(angle)) / (1 + np.sin(angle)**2)
+        paths[1].append((d2_lat, d2_lon, 500))
+        
+        # Drone 3: Line
+        paths[2].append((CENTER_LAT + (radius * 1.5 * np.sin(angle)), CENTER_LON - 0.02, 800))
+    return paths
+
+path_data = generate_path_coordinates(TOTAL_FRAMES)
+
+# Initialize Simulated Drones
+current_time = int(time.time())
+simulated_drones = [
+    FlyingObject.create_with_id(101, CENTER_LAT, CENTER_LON, 100.0, 0.0, 0.0, 0.0, current_time),
+    FlyingObject.create_with_id(102, CENTER_LAT, CENTER_LON, 500.0, 0.0, 0.0, 0.0, current_time),
+    FlyingObject.create_with_id(103, CENTER_LAT, CENTER_LON, 800.0, 0.0, 0.0, 0.0, current_time)
+]
 
 # --- DASH APP ---
 app = dash.Dash(__name__)
 
-# Fixed Map Settings
-CENTER_LAT = 34.05 # Default (LA) - will auto-center if drones appear
-CENTER_LON = -118.25
-
 app.layout = html.Div([
-    html.H3("Live Drone Remote ID Tracker", style={'position': 'absolute', 'z-index': '10', 'left': '20px', 'top': '10px', 'color': 'white'}),
-    
+    html.Div([
+        html.H3("VDAWS - Drone Tracking", style={'margin': '0', 'color': 'white'}),
+        html.Div(id='status-indicator', style={'color': 'lime', 'fontWeight': 'bold'})
+    ], style={'position': 'absolute', 'z-index': '10', 'left': '20px', 'top': '20px', 'backgroundColor': 'rgba(0,0,0,0.5)', 'padding': '10px', 'borderRadius': '5px'}),
+
     dcc.Graph(id='map-graph', style={'height': '100vh'}),
-    
-    # Update the map every 500ms (2 times per second)
-    dcc.Interval(id='interval-component', interval=500, n_intervals=0),
+    dcc.Interval(id='interval-component', interval=200, n_intervals=0), # 200ms = 5fps
 ])
 
 @app.callback(
-    Output('map-graph', 'figure'),
+    [Output('map-graph', 'figure'),
+     Output('status-indicator', 'children'),
+     Output('status-indicator', 'style')],
     Input('interval-component', 'n_intervals')
 )
 def update_map(n):
-    # 1. Get Real Data from Manager
+    # 1. Check for LIVE data
     active_objects = manager.get_active_objects()
     
-    # 2. Prepare Data for Plotly
+    mode_text = "MODE: LIVE TRACKING"
+    mode_style = {'color': '#00ff00', 'fontWeight': 'bold'} # Green
+
+    # 2. If no live data, use SIMULATION
+    if not active_objects:
+        mode_text = "MODE: SIMULATION (No Live Signal)"
+        mode_style = {'color': '#ffaa00', 'fontWeight': 'bold'} # Orange
+        
+        frame_idx = int(n) % TOTAL_FRAMES
+        next_frame_idx = (int(n) + 1) % TOTAL_FRAMES
+        
+        # Update Simulated Positions
+        for i, drone in enumerate(simulated_drones):
+            target_pos = path_data[i][frame_idx]
+            future_pos = path_data[i][next_frame_idx]
+            
+            # Simple velocity approx
+            vx = (future_pos[1] - target_pos[1]) * 10000 # Scale up for visibility
+            vy = (future_pos[0] - target_pos[0]) * 10000
+            
+            drone.set_position(target_pos[0], target_pos[1], target_pos[2])
+            drone.set_velocity(vx, vy, 0.0)
+            
+        active_objects = simulated_drones
+
+    # 3. Prepare Data for Plotly
     node_data = []
     arrow_data = []
-    
-    # Arrow visuals
     ARROW_OFFSET = 0.00025 
-    LON_SCALE = 1.0 # Will calc based on lat later
 
     for obj in active_objects:
         d_lat = float(obj.x)
@@ -79,90 +128,60 @@ def update_map(n):
         vx = float(obj.velocity[0])
         vy = float(obj.velocity[1])
         
-        # Node (The Drone Dot)
         node_data.append({
-            'lat': d_lat,
-            'lon': d_lon,
-            'alt': d_alt,
-            'id': f"ID: {obj.id}",
-            'size': 15
+            'lat': d_lat, 'lon': d_lon, 'alt': d_alt,
+            'id': f"ID:{obj.id}", 'size': 15
         })
 
-        # Velocity Arrow
         speed_mag = math.sqrt(vx**2 + vy**2)
-        if speed_mag > 0.5: # Only draw arrow if moving > 0.5 m/s
-            # Normalize vector
+        # Lower threshold for simulation visibility
+        if speed_mag > 0.00001: 
             norm_vx = vx / speed_mag
             norm_vy = vy / speed_mag
-            
-            # Adjust Longitude scale for arrow direction (simple Mercator fix)
             LON_SCALE = 1.0 / math.cos(math.radians(d_lat))
             
             head_lat = d_lat + (norm_vy * ARROW_OFFSET)
             head_lon = d_lon + (norm_vx * ARROW_OFFSET * LON_SCALE)
             
             arrow_data.append({
-                'lat': head_lat,
-                'lon': head_lon,
-                'speed': speed_mag,
-                'size': 8
+                'lat': head_lat, 'lon': head_lon,
+                'speed': speed_mag, 'size': 8
             })
 
     df_nodes = pd.DataFrame(node_data)
     df_arrows = pd.DataFrame(arrow_data)
 
-    # 3. Construct the Map
-    
-    # CASE A: No Drones Found
+    # 4. Build Map
     if df_nodes.empty:
+        fig = px.scatter_mapbox(lat=[CENTER_LAT], lon=[CENTER_LON], zoom=12)
+    else:
+        # Auto-center on the first drone
+        center_lat = df_nodes.iloc[0]['lat']
+        center_lon = df_nodes.iloc[0]['lon']
+
         fig = px.scatter_mapbox(
-            lat=[CENTER_LAT], lon=[CENTER_LON], zoom=10
+            df_nodes, lat="lat", lon="lon", color="alt", size="size",
+            size_max=15, zoom=13, hover_name="id",
+            color_continuous_scale="Jet", range_color=[0, 500],
+            center={"lat": center_lat, "lon": center_lon}
         )
-        fig.update_layout(mapbox_style="open-street-map")
-        fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
-        return fig
 
-    # CASE B: Drones Detected
-    # Create the scatter plot for drones
-    fig = px.scatter_mapbox(
-        df_nodes, 
-        lat="lat", 
-        lon="lon", 
-        color="alt", 
-        size="size",
-        size_max=15, 
-        zoom=14, 
-        hover_name="id",
-        color_continuous_scale="Jet", 
-        range_color=[0, 120] # 0-120 meters (approx 400ft)
-    )
-
-    # Overlay Velocity Arrows
     if not df_arrows.empty:
         fig.add_trace(go.Scattermapbox(
-            lat=df_arrows['lat'],
-            lon=df_arrows['lon'],
+            lat=df_arrows['lat'], lon=df_arrows['lon'],
             mode='markers',
-            marker=go.scattermapbox.Marker(
-                size=10,
-                color='red', # Red tip for direction
-                allowoverlap=True
-            ),
+            marker=go.scattermapbox.Marker(size=10, color='red'),
             hoverinfo='skip'
         ))
 
-    # Layout Updates
     fig.update_layout(
         mapbox_style="open-street-map",
         margin={"r":0, "t":0, "l":0, "b":0},
         showlegend=False,
-        # 'uirevision' is CRITICAL. 
-        # It stops the map from resetting zoom/pan every 0.5 seconds.
         uirevision='constant_loop' 
     )
     
-    return fig
+    return fig, mode_text, mode_style
 
 if __name__ == '__main__':
-    # Turn off reloader because it messes with the background Sniffer thread
     app.run(debug=True, use_reloader=False)
