@@ -1,8 +1,9 @@
 import math
 import cv2
-from typing import List
+import numpy as np
+from typing import List, Protocol
 from queue import Queue
-from detect import VoxelTracer, process_camera, get_camera_rays, Graph, ClusterTracker, get_cluster_centers
+from detect import VoxelTracer, process_camera, get_camera_rays, Graph, ClusterTracker, get_cluster_centers, extract_percentile_index
 from models import CameraData, ObjectData
 from batch import Batcher
 
@@ -11,16 +12,22 @@ VOXEL_SIZE = 10.0
 EPS_ADJACENT = VOXEL_SIZE
 EPS_CORNER = math.sqrt(3) * VOXEL_SIZE
 
-class DataPipeline:
-    def __init__(self, db_path: str, threshold: float, max_distance: float, max_age: int):
-        self.batcher = Batcher(db_path, threshold)
-        self.frames: Queue[List[CameraData]] = Queue()
-        self.voxel_tracer = VoxelTracer(GRID_SIZE, VOXEL_SIZE)
-        self.graph = Graph()
-        self.graph.show()
-        self.cluster_tracker = ClusterTracker(max_distance, max_age)
+class Exporter(Protocol):
+    def export(self, data: List[ObjectData]) -> None:
+        ...
         
-    def pipeline(self):
+class DataPipeline:
+    def __init__(self, batcher: Batcher, voxel_tracer: VoxelTracer, cluster_tracker: ClusterTracker, exporter: Exporter, graph: Graph | None = None):
+        self.batcher = batcher
+        self.voxel_tracer = voxel_tracer
+        self.cluster_tracker = cluster_tracker
+        self.frames: Queue[List[CameraData]] = Queue()
+        self.exporter = exporter
+        self.graph = graph
+        if graph:
+            self.graph.show()
+        
+    def run(self):
         # Call Batcher
         batch = self.batcher.batch()
         
@@ -36,7 +43,14 @@ class DataPipeline:
             avg_timestamp += cameraData.timestamp
         avg_timestamp /= len(batch)
 
-        motion_voxels = self.graph.extract_percentile_index(self.voxel_tracer.voxel_grid, 99.9)
+        # Optional Visualization
+        if (self.graph):
+            self.graph.add_voxels(self.voxel_tracer.voxel_grid, self.voxel_tracer.voxel_origin, VOXEL_SIZE)
+            self.graph.update()
+
+        motion_voxels = np.transpose(extract_percentile_index(self.voxel_tracer.voxel_grid, 99.9))
+        self.voxel_tracer.clear_grid_data()
+
         centroids = get_cluster_centers(motion_voxels, EPS_CORNER)
         
         ids = self.cluster_tracker.track_clusters(centroids, avg_timestamp)
@@ -46,17 +60,32 @@ class DataPipeline:
         objects: List[ObjectData] = []
         for id in ids:
             objects.append(ObjectData(
-                id, positions[id], velocities[id]
+                id, avg_timestamp, positions[id], velocities[id]
             ))
         self.cluster_tracker.cleanup_old_clusters()
+
+        self.exporter.export(objects)
         
-        # Optional Visualization
-        self.graph.add_voxels(self.voxel_tracer.voxel_grid, self.voxel_tracer.voxel_origin, VOXEL_SIZE)
-        self.graph.update()
+class ExportToCSV:
+    def __init__(self, filename: str):
+        self.filename = filename
         
-        self.voxel_tracer.clear_grid_data()
+    def export(self, data: List[ObjectData]) -> None:
+        print(data)
+        print()
         
 if __name__ == '__main__':
-    pipeline = DataPipeline('./sim/sim.db', 0.5, 10.0, 3)
+    db_path = './sim/sim.db'
+    timestamp_threshold = 0.5
+    max_distance = 20.0
+    max_age = 5
+    
+    batcher = Batcher(db_path, timestamp_threshold)
+    voxel_tracer = VoxelTracer(GRID_SIZE, VOXEL_SIZE)
+    cluster_tracker = ClusterTracker(max_distance, max_age)
+    exporter = ExportToCSV('output.csv')
+    graph = Graph()
+    
+    pipeline = DataPipeline(batcher, voxel_tracer, cluster_tracker, exporter)
     for i in range(99):
-        pipeline.pipeline()
+        pipeline.run()
