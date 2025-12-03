@@ -65,18 +65,19 @@ class ClusterTracker:
         
         for id in ids:
             centroids = self.cluster_history[id]['centroids']
-            timestamp = self.cluster_history[id]['timestamp']
+            timestamps = self.cluster_history[id]['timestamp']
             
-            if (len(centroids) < 2 or len(timestamp) < 2): continue
-            
-            velocities[id] = (centroids[-1] - centroids[-2]) / (timestamp[-1] - timestamp[-2])
+            if (len(centroids) < 2 or len(timestamps) < 2):
+                velocities[id] = np.array([0., 0., 0.])
+            else:
+                velocities[id] = (centroids[-1] - centroids[-2]) / (timestamps[-1] - timestamps[-2])
             
         return velocities
     
     def get_cluster_position(self, ids: list[int]) -> dict[int, np.ndarray]:
         pos = {}
         for id in ids:
-            pos[id] = self.cluster_history[id]['centroids']
+            pos[id] = self.cluster_history[id]['centroids'][-1]
         return pos
     
 def get_cluster_centers(data: np.ndarray, eps: float) -> np.ndarray:
@@ -89,7 +90,6 @@ def get_cluster_centers(data: np.ndarray, eps: float) -> np.ndarray:
     centers = []
     clust = DBSCAN(eps=eps, min_samples=3)
     clust.fit(data)
-
     for klass in range(clust.labels_.max() + 1):
         centroid = np.mean(data[clust.labels_ == klass], axis=0)
         centers.append(centroid)
