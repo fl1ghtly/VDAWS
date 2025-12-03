@@ -2,15 +2,14 @@ import pyvista as pv
 import numpy as np
 from detect.ray import Ray
 
-SHOW_GRID = False
-SHOW_RAY = True
-SHOW_TOP_PERCENTILE = False
-POINT_SIZE = 12.
-
 class Graph:
     plotter: pv.Plotter
     
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, show_grid: bool = False, show_ray: bool = True, show_top_percentile: bool = False, point_size: float = 12, *args, **kwargs) -> None:
+        self.show_grid = show_grid
+        self.show_ray = show_ray
+        self.show_top_percentile = show_top_percentile
+        self.point_size = point_size
         self.plotter = pv.Plotter(*args, **kwargs)
         
     def show(self) -> None:
@@ -41,31 +40,25 @@ class Graph:
         self.plotter.close()
         
     def add_voxels(self, voxels: np.ndarray, origin: np.ndarray, size: float) -> None:
-        if SHOW_GRID:
+        if self.show_grid:
             self._create_grid(voxels, origin, size)
         else:
             self._create_point_cloud(voxels, origin, size)
     
     def add_ray(self, ray: Ray, color: str, reversed=False) -> None:
-        if not SHOW_RAY: return
+        if not self.show_ray: return
         rev = -1 if reversed else 1
         line = pv.Line(ray.origin, ray.origin + ray.norm_dir * 1000 * rev)
         self.plotter.add_mesh(line, 
                               color=color, 
                               line_width=2,
                               reset_camera=False)      
-        
-    def extract_percentile_index(self, data: np.ndarray, percentile: float) -> tuple:
-        """Returns x, y, z arrays containing the indices of nonzero data points
-        above a certain percentile."""
-        p = np.percentile(data[data != 0], percentile)
-        return np.nonzero(data >= p)
     
     def _create_point_cloud(self, voxels: np.ndarray, origin: np.ndarray, size: float):
         # Points are the (x, y, z) of the center of each voxel
         voxel_center = np.full(3, size / 2)
-        if SHOW_TOP_PERCENTILE:
-            ind = self.extract_percentile_index(voxels, 99.9)
+        if self.show_top_percentile:
+            ind = extract_percentile_index(voxels, 99.9)
         else:
             ind = np.nonzero(voxels)
         points = np.transpose(ind) * size + voxel_center + origin
@@ -79,7 +72,7 @@ class Graph:
         self.plotter.add_points(cloud, 
                                 render_points_as_spheres=True,
                                 # opacity='geom',
-                                point_size=POINT_SIZE,
+                                point_size=self.point_size,
                                 name="point_cloud",
                                 reset_camera=False)
     
@@ -91,3 +84,9 @@ class Graph:
         grid.cell_data['Values'] = voxels.flatten(order="F")
 
         self.plotter.add_mesh(grid, show_edges=True, reset_camera=False)
+        
+def extract_percentile_index(data: np.ndarray, percentile: float) -> np.ndarray:
+    """Returns x, y, z arrays containing the indices of nonzero data points
+    above a certain percentile."""
+    p = np.percentile(data[data != 0], percentile)
+    return np.array(np.nonzero(data >= p))
