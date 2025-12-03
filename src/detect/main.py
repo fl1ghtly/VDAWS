@@ -101,7 +101,7 @@ def get_cluster_centers(data: np.ndarray, eps: float) -> np.ndarray | None:
         data points and M is the dimension
     """
     centers = []
-    clust = DBSCAN(eps=eps, min_samples=10)
+    clust = DBSCAN(eps=eps, min_samples=3)
     clust.fit(data)
 
     for klass in range(clust.labels_.max() + 1):
@@ -137,6 +137,7 @@ def _singlethreaded(cams: list[Camera], input: Queue, output: Queue, vt: VoxelTr
     
 def main():
     '''
+    # Single Object
     cam_L = Camera((39.694, -211.93, 1.111), 
                    (94.8, 0.000014, 13.6), 
                    "./videos/test1/cam_L.mkv",
@@ -150,6 +151,8 @@ def main():
                    './videos/test1/cam_F.mkv',
                    39.6)
     '''
+    
+    # Multiple Objects
     cam_L = Camera((-354.58, 597.91, 12.217), 
                    (88.327, -0.000009, 204.57), 
                    "./videos/test2/cam_L.mkv",
@@ -190,7 +193,11 @@ def main():
             motion_voxels = graph.extract_percentile_index(voxel_grid_state, 99.9)
             centers = get_cluster_centers(np.transpose(motion_voxels), EPS_CORNER)
             if centers is not None:
+                # for i, center in enumerate(centers):
+                #     print(f'Object {i}: {center}')
                 print(vt.grid_to_voxel(centers))
+                with open('data.txt', 'a') as file:
+                    np.savetxt(file, vt.grid_to_voxel(centers))
             # graph.write_frame()
         except Empty:
             continue

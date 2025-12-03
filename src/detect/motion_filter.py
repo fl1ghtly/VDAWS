@@ -13,13 +13,10 @@ def filter_motion(prevFrame: typing.MatLike, nextFrame: typing.MatLike, threshol
 def _test_filter(file: str):
     cap = cv2.VideoCapture(file)
 
-    ret, frame = cap.read()
-    prev = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    ret, prev = cap.read()
     while (ret):
-        ret, frame = cap.read()
+        ret, next = cap.read()
         if not ret: break
-        
-        next = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
         motion_mask = filter_motion(prev, next, 2)
         cv2.imshow("Motion", motion_mask)
@@ -30,5 +27,5 @@ def _test_filter(file: str):
     cv2.destroyAllWindows()
     
 if __name__ == '__main__':
-    _test_filter("./videos/test.mp4")               
+    _test_filter("./videos/test2/cam_R.mkv")               
 
