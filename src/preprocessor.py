@@ -52,7 +52,7 @@ if __name__ == '__main__':
         success, next = cap.read()
         frame = 1
         while success:
-            img_path = directory + f'frame{frame}.jpg'
+            img_path = directory + f'frame{frame}.png'
             image = filter_motion(prev, next, 2)
             cv2.imwrite(img_path, image)
             
