@@ -32,7 +32,7 @@ class Batcher:
                         row['CameraID'],
                         row['Timestamp'],
                         np.array([row['RotationX'], row['RotationY'], row['RotationZ']]),
-                        np.array([row['Latitude'], row['Longitude'], row['Altitude']]),
+                        np.array([row['Latitude'], row['Altitude'], row['Longitude']]),
                         row['ImagePath'],
                         row['FOV']
                     ))
@@ -40,11 +40,13 @@ class Batcher:
                 left, right = find_largest_window_in_threshold(timestamps, self.threshold)
                 # Select only the rows that are in the window
                 output = output[left:right + 1]
+                # TODO take the row IDs of times less than minimum and continue to delete until timestamp is >= minimum time
                 # Delete all rows used in the window AND delete all rows that are less than the minimum timestamp in the window
                 delete_ids = delete_ids[:right + 1]
                 
                 # Delete rows
                 cursor.executemany('DELETE FROM SensorData WHERE RowID = ?', delete_ids)
+                # TODO delete images
         except sqlite3.Error as e:
             print(f'Error {e} occurred')
         finally:
