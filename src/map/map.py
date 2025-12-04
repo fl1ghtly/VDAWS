@@ -10,61 +10,52 @@ import numpy as np
 import uuid
 import time
 
-# --- FIX IMPORT PATH ---
-# Get current directory: .../VDAWS/src/map
+# --- IMPORT PATH FIX ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
-# Get project root: .../VDAWS
 project_root = os.path.dirname(os.path.dirname(current_dir))
-# Add to path
 sys.path.append(project_root)
 
 # Local Imports
 from src.map.object_manager import ObjectManager
 from src.map.flying_object import FlyingObject
 from src.scanning.remoteid_sniffer import run_sniffer_thread
+# --- NEW IMPORT ---
+from src.map.collision_detector import CollisionDetector
 
 # --- CONFIGURATION ---
-WIFI_INTERFACE = 'Wi-Fi'  # Change to 'wlan0' or 'en0' if on Linux/Mac
-
-# --- 1. LIVE TRACKING SETUP ---
-manager = ObjectManager(timeout_seconds=5)
-run_sniffer_thread(manager, interface=WIFI_INTERFACE)
-
-# --- 2. SIMULATION SETUP (Restored) ---
-# Center Map (San Francisco for simulation)
+WIFI_INTERFACE = 'Wi-Fi' 
 CENTER_LAT = 37.76
 CENTER_LON = -122.43
-
 TOTAL_FRAMES = 100
 PATH_MOVEMENT_SCALE = 1.5 
 
+# --- 1. SETUP ---
+manager = ObjectManager(timeout_seconds=5)
+# run_sniffer_thread(manager, interface=WIFI_INTERFACE) # Uncomment for live
+
+# Initialize Collision Detector (50m radius, look 10s into future)
+collision_detector = CollisionDetector(warning_radius_meters=150.0, prediction_horizon_seconds=10.0)
+
+# --- 2. SIMULATION DATA ---
 def generate_path_coordinates(steps):
     paths = [[], [], []]
-    radius = 0.01 * PATH_MOVEMENT_SCALE # Reduced radius slightly for better zoom
+    radius = 0.01 * PATH_MOVEMENT_SCALE 
     for i in range(steps):
         t = i / steps 
         angle = t * 2 * np.pi
-        
-        # Drone 1: Circle
         paths[0].append((CENTER_LAT + radius * np.sin(angle), CENTER_LON + radius * np.cos(angle), 100))
-        
-        # Drone 2: Figure 8
         scale = radius * 1.5
         d2_lat = CENTER_LAT + (scale * np.sin(angle) * np.cos(angle)) / (1 + np.sin(angle)**2)
         d2_lon = CENTER_LON + (scale * np.cos(angle)) / (1 + np.sin(angle)**2)
-        paths[1].append((d2_lat, d2_lon, 500))
-        
-        # Drone 3: Line
+        paths[1].append((d2_lat, d2_lon, 100)) # Changed alt to 100 to force collision for demo
         paths[2].append((CENTER_LAT + (radius * 1.5 * np.sin(angle)), CENTER_LON - 0.02, 800))
     return paths
 
 path_data = generate_path_coordinates(TOTAL_FRAMES)
-
-# Initialize Simulated Drones
 current_time = int(time.time())
 simulated_drones = [
     FlyingObject.create_with_id(101, CENTER_LAT, CENTER_LON, 100.0, 0.0, 0.0, 0.0, current_time),
-    FlyingObject.create_with_id(102, CENTER_LAT, CENTER_LON, 500.0, 0.0, 0.0, 0.0, current_time),
+    FlyingObject.create_with_id(102, CENTER_LAT, CENTER_LON, 100.0, 0.0, 0.0, 0.0, current_time),
     FlyingObject.create_with_id(103, CENTER_LAT, CENTER_LON, 800.0, 0.0, 0.0, 0.0, current_time)
 ]
 
@@ -74,91 +65,100 @@ app = dash.Dash(__name__)
 app.layout = html.Div([
     html.Div([
         html.H3("VDAWS - Drone Tracking", style={'margin': '0', 'color': 'white'}),
-        html.Div(id='status-indicator', style={'color': 'lime', 'fontWeight': 'bold'})
-    ], style={'position': 'absolute', 'z-index': '10', 'left': '20px', 'top': '20px', 'backgroundColor': 'rgba(0,0,0,0.5)', 'padding': '10px', 'borderRadius': '5px'}),
+        html.Div(id='status-indicator', style={'fontWeight': 'bold'}),
+        html.Div(id='collision-alert', style={'color': 'red', 'fontWeight': 'bold', 'marginTop': '5px'})
+    ], style={'position': 'absolute', 'z-index': '10', 'left': '20px', 'top': '20px', 'backgroundColor': 'rgba(0,0,0,0.6)', 'padding': '15px', 'borderRadius': '5px'}),
 
     dcc.Graph(id='map-graph', style={'height': '100vh'}),
-    dcc.Interval(id='interval-component', interval=200, n_intervals=0), # 200ms = 5fps
+    dcc.Interval(id='interval-component', interval=200, n_intervals=0),
 ])
 
 @app.callback(
     [Output('map-graph', 'figure'),
      Output('status-indicator', 'children'),
-     Output('status-indicator', 'style')],
+     Output('status-indicator', 'style'),
+     Output('collision-alert', 'children')],
     Input('interval-component', 'n_intervals')
 )
 def update_map(n):
-    # 1. Check for LIVE data
+    # 1. Get Objects (Live or Sim)
     active_objects = manager.get_active_objects()
-    
     mode_text = "MODE: LIVE TRACKING"
-    mode_style = {'color': '#00ff00', 'fontWeight': 'bold'} # Green
+    mode_style = {'color': '#00ff00', 'fontWeight': 'bold'}
 
-    # 2. If no live data, use SIMULATION
     if not active_objects:
-        mode_text = "MODE: SIMULATION (No Live Signal)"
-        mode_style = {'color': '#ffaa00', 'fontWeight': 'bold'} # Orange
+        mode_text = "MODE: SIMULATION"
+        mode_style = {'color': '#ffaa00', 'fontWeight': 'bold'}
         
         frame_idx = int(n) % TOTAL_FRAMES
         next_frame_idx = (int(n) + 1) % TOTAL_FRAMES
         
-        # Update Simulated Positions
         for i, drone in enumerate(simulated_drones):
             target_pos = path_data[i][frame_idx]
             future_pos = path_data[i][next_frame_idx]
             
-            # Simple velocity approx
-            vx = (future_pos[1] - target_pos[1]) * 10000 # Scale up for visibility
-            vy = (future_pos[0] - target_pos[0]) * 10000
+            # Calculate simulated velocity (Degrees per frame -> approx Degrees per sec)
+            fps = 5.0
+            vx = (future_pos[0] - target_pos[0]) * fps 
+            vy = (future_pos[1] - target_pos[1]) * fps
+            vz = (future_pos[2] - target_pos[2]) * fps
             
             drone.set_position(target_pos[0], target_pos[1], target_pos[2])
-            drone.set_velocity(vx, vy, 0.0)
+            drone.set_velocity(vx, vy, vz)
             
         active_objects = simulated_drones
 
-    # 3. Prepare Data for Plotly
+    # 2. RUN COLLISION DETECTION
+    collision_events = collision_detector.detect_collisions(active_objects)
+    
+    alert_text = ""
+    collision_lines_lat = []
+    collision_lines_lon = []
+
+    if collision_events:
+        alert_text = f"⚠️ COLLISION WARNING: {len(collision_events)} Predicted!"
+        
+        # Create line segments between colliding drones
+        obj_map = {obj.id: obj for obj in active_objects}
+        for event in collision_events:
+            if event.drone_a_id in obj_map and event.drone_b_id in obj_map:
+                d1 = obj_map[event.drone_a_id]
+                d2 = obj_map[event.drone_b_id]
+                
+                # Add line segment (with None to break connection between different pairs)
+                collision_lines_lat.extend([d1.x, d2.x, None])
+                collision_lines_lon.extend([d1.y, d2.y, None])
+
+    # 3. Prepare Visuals
     node_data = []
     arrow_data = []
     ARROW_OFFSET = 0.00025 
 
     for obj in active_objects:
-        d_lat = float(obj.x)
-        d_lon = float(obj.y)
-        d_alt = float(obj.altitude)
-        vx = float(obj.velocity[0])
-        vy = float(obj.velocity[1])
-        
         node_data.append({
-            'lat': d_lat, 'lon': d_lon, 'alt': d_alt,
+            'lat': obj.x, 'lon': obj.y, 'alt': obj.altitude,
             'id': f"ID:{obj.id}", 'size': 15
         })
 
-        speed_mag = math.sqrt(vx**2 + vy**2)
-        # Lower threshold for simulation visibility
-        if speed_mag > 0.00001: 
-            norm_vx = vx / speed_mag
-            norm_vy = vy / speed_mag
-            LON_SCALE = 1.0 / math.cos(math.radians(d_lat))
+        # Visualization for direction vectors
+        speed_mag = math.sqrt(obj.velocity[0]**2 + obj.velocity[1]**2)
+        if speed_mag > 0.0:
+            norm_vx = obj.velocity[0] / speed_mag
+            norm_vy = obj.velocity[1] / speed_mag
+            # Correct vector orientation for visual map (lat is Y, lon is X)
+            head_lat = obj.x + (norm_vx * ARROW_OFFSET) 
+            head_lon = obj.y + (norm_vy * ARROW_OFFSET)
             
-            head_lat = d_lat + (norm_vy * ARROW_OFFSET)
-            head_lon = d_lon + (norm_vx * ARROW_OFFSET * LON_SCALE)
-            
-            arrow_data.append({
-                'lat': head_lat, 'lon': head_lon,
-                'speed': speed_mag, 'size': 8
-            })
+            arrow_data.append({'lat': head_lat, 'lon': head_lon, 'size': 8})
 
     df_nodes = pd.DataFrame(node_data)
-    df_arrows = pd.DataFrame(arrow_data)
-
-    # 4. Build Map
+    
+    # Base Map
     if df_nodes.empty:
         fig = px.scatter_mapbox(lat=[CENTER_LAT], lon=[CENTER_LON], zoom=12)
     else:
-        # Auto-center on the first drone
         center_lat = df_nodes.iloc[0]['lat']
         center_lon = df_nodes.iloc[0]['lon']
-
         fig = px.scatter_mapbox(
             df_nodes, lat="lat", lon="lon", color="alt", size="size",
             size_max=15, zoom=13, hover_name="id",
@@ -166,22 +166,32 @@ def update_map(n):
             center={"lat": center_lat, "lon": center_lon}
         )
 
-    if not df_arrows.empty:
+    # Layer: Direction Arrows
+    if arrow_data:
+        df_arrows = pd.DataFrame(arrow_data)
         fig.add_trace(go.Scattermapbox(
             lat=df_arrows['lat'], lon=df_arrows['lon'],
-            mode='markers',
-            marker=go.scattermapbox.Marker(size=10, color='red'),
-            hoverinfo='skip'
+            mode='markers', marker=go.scattermapbox.Marker(size=8, color='white'),
+            hoverinfo='skip', name='Heading'
+        ))
+
+    # Layer: Collision Lines (Red)
+    if collision_lines_lat:
+        fig.add_trace(go.Scattermapbox(
+            lat=collision_lines_lat, lon=collision_lines_lon,
+            mode='lines',
+            line=dict(width=4, color='red'),
+            hoverinfo='skip', name='Collision Course'
         ))
 
     fig.update_layout(
         mapbox_style="open-street-map",
         margin={"r":0, "t":0, "l":0, "b":0},
         showlegend=False,
-        uirevision='constant_loop' 
+        uirevision='constant_loop'
     )
     
-    return fig, mode_text, mode_style
+    return fig, mode_text, mode_style, alert_text
 
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False)
