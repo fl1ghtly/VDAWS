@@ -30,7 +30,8 @@ def _setup_database(db_path: str):
             RotationY REAL NOT NULL, 
             RotationZ REAL NOT NULL, 
             FOV REAL NOT NULL, 
-            ImagePath TEXT NOT NULL
+            ImagePath TEXT NOT NULL,
+            isDeleted INTEGER
         )""")
 
 if __name__ == '__main__':   

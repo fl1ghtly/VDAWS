@@ -77,15 +77,15 @@ class ExportToCSV:
 if __name__ == '__main__':
     db_path = './sim/sim.db'
     timestamp_threshold = 0.5
-    max_distance = 20.0
+    max_distance = 10.0
     max_age = 5
     
-    batcher = Batcher(db_path, timestamp_threshold)
+    batcher = Batcher(db_path, timestamp_threshold, soft_delete=True)
     voxel_tracer = VoxelTracer(GRID_SIZE, VOXEL_SIZE)
     cluster_tracker = ClusterTracker(max_distance, max_age)
     exporter = ExportToCSV('output.csv')
     graph = Graph()
     
     pipeline = DataPipeline(batcher, voxel_tracer, cluster_tracker, exporter)
-    for i in range(99):
+    for i in range(98):
         pipeline.run()

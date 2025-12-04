@@ -3,9 +3,10 @@ import numpy as np
 from models import RawSensorData
 
 class Batcher:
-    def __init__(self, path: str, threshold: float):
+    def __init__(self, path: str, threshold: float, soft_delete: bool = False):
         self.db_path = path
         self.threshold = threshold
+        self.soft_delete = soft_delete
     
     def batch(self) -> list[RawSensorData]:
         output: list[RawSensorData] = []
@@ -20,6 +21,7 @@ class Batcher:
                 cursor.execute("""
                     SELECT *, MIN(Timestamp)
                     FROM SensorData
+                    WHERE isDeleted IS NULL
                     GROUP BY CameraID
                     ORDER BY Timestamp ASC
                 """)
@@ -45,7 +47,14 @@ class Batcher:
                 delete_ids = delete_ids[:right + 1]
                 
                 # Delete rows
-                cursor.executemany('DELETE FROM SensorData WHERE RowID = ?', delete_ids)
+                if self.soft_delete:
+                    cursor.executemany("""UPDATE SensorData
+                        SET isDeleted = 1
+                        WHERE RowID = ?""",
+                        delete_ids
+                    )
+                else:
+                    cursor.executemany('DELETE FROM SensorData WHERE RowID = ?', delete_ids)
                 # TODO delete images
         except sqlite3.Error as e:
             print(f'Error {e} occurred')
@@ -80,6 +89,6 @@ def find_largest_window_in_threshold(values: list[float], threshold: float) -> t
     return (maxLeft, maxRight)
         
 if __name__ == '__main__':
-    batcher = Batcher('sim/test.db', 0.2)
+    batcher = Batcher('sim/sim.db', 0.2, soft_delete=True)
     output = batcher.batch()
     print(output)
