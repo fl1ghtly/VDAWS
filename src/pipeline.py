@@ -1,6 +1,7 @@
 import math
 import cv2
 import numpy as np
+import sqlite3
 from typing import List, Protocol
 from queue import Queue
 from detect import VoxelTracer, process_camera, get_camera_rays, Graph, ClusterTracker, get_cluster_centers, extract_percentile_index
@@ -66,13 +67,48 @@ class DataPipeline:
 
         self.exporter.export(objects)
         
-class ExportToCSV:
-    def __init__(self, filename: str):
-        self.filename = filename
+class ExportToSQLite:
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        
+        with sqlite3.connect(self.db_path) as connection:
+            cursor = connection.cursor()
+            cursor.execute("DROP TABLE IF EXISTS ProcessedData")
+            cursor.execute("""CREATE TABLE ProcessedData (
+                RowID INTEGER PRIMARY KEY, 
+                CameraID INTEGER NOT NULL, 
+                Timestamp REAL NOT NULL, 
+                Latitude REAL NOT NULL, 
+                Longitude REAL NOT NULL, 
+                Altitude REAL NOT NULL, 
+                VelocityX REAL NOT NULL, 
+                VelocityY REAL NOT NULL, 
+                VelocityZ REAL NOT NULL,
+                isDeleted INTEGER
+            )""")
         
     def export(self, data: List[ObjectData]) -> None:
         print(data)
-        print()
+        with sqlite3.connect(self.db_path) as connection:
+            cursor = connection.cursor()
+            
+            for d in data:
+                tabulated = (
+                    d.id, 
+                    d.timestamp, 
+                    d.position[0], 
+                    d.position[1], 
+                    d.position[2],
+                    d.velocity[0],
+                    d.velocity[1],
+                    d.velocity[2]
+                )
+
+                cursor.execute("""INSERT INTO ProcessedData
+                    (CameraID, Timestamp, Latitude, Altitude, Longitude, VelocityX, VelocityY, VelocityZ)
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?)""",
+                    tabulated
+                )
         
 if __name__ == '__main__':
     db_path = './sim/sim.db'
@@ -83,7 +119,7 @@ if __name__ == '__main__':
     batcher = Batcher(db_path, timestamp_threshold, soft_delete=True)
     voxel_tracer = VoxelTracer(GRID_SIZE, VOXEL_SIZE)
     cluster_tracker = ClusterTracker(max_distance, max_age)
-    exporter = ExportToCSV('output.csv')
+    exporter = ExportToSQLite(db_path)
     graph = Graph()
     
     pipeline = DataPipeline(batcher, voxel_tracer, cluster_tracker, exporter)
