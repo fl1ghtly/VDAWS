@@ -62,7 +62,7 @@ class DataPipeline:
         self.exporter.export(objects)
         
 if __name__ == '__main__':
-    db_path = './sim/sim.db'
+    db_path = '/sim/sim.db'
     timestamp_threshold = 0.5
     max_distance = 10.0
     max_age = 5
@@ -70,7 +70,8 @@ if __name__ == '__main__':
     batcher = dt.Batcher(db_path, timestamp_threshold, soft_delete=True)
     voxel_tracer = dt.VoxelTracer(GRID_SIZE, VOXEL_SIZE)
     cluster_tracker = dt.ClusterTracker(max_distance, max_age)
-    exporter = dt.ExportToSQLite(db_path)
+    # exporter = dt.ExportToSQLite(db_path)
+    exporter = dt.ExportToCLI()
     graph = dt.Graph()
     
     pipeline = DataPipeline(batcher, voxel_tracer, cluster_tracker, exporter)

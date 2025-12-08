@@ -27,7 +27,6 @@ class ExportToSQLite:
             )""")
         
     def export(self, data: List[ObjectData]) -> None:
-        print(data)
         with sqlite3.connect(self.db_path) as connection:
             cursor = connection.cursor()
             
@@ -49,3 +48,6 @@ class ExportToSQLite:
                     tabulated
                 )
         
+class ExportToCLI:
+    def export(self, data: List[ObjectData]) -> None:
+        print(data)
