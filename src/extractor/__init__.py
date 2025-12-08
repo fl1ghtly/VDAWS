@@ -1,0 +1,1 @@
+from extractor.motion_filter import filter_motion

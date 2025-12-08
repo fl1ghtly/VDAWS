@@ -2,7 +2,7 @@ import sqlite3
 import cv2
 import os
 import shutil
-from detect import filter_motion
+from extractor import filter_motion
 
 def save_to_database(db_path: str, data: tuple):
     with sqlite3.connect(db_path) as connection:
