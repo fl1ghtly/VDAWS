@@ -1,0 +1,10 @@
+services:
+  extractor:
+    build: ./src/extractor
+  detector:
+    build: ./src/detector
+    volumes:
+      - ./sim:/sim
+      - ./src/models:/src/models:ro
+  map:
+    build: ./src/map
