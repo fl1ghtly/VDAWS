@@ -1,0 +1,5 @@
+numba>=0.60.0
+numpy>=2.0.2
+opencv_python_headless>=4.11.0.86
+pyvista>=0.45.2
+scikit_learn>=1.6.1
