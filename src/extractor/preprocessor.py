@@ -46,7 +46,7 @@ def setup_database(db_path: str):
         )""")
 
 if __name__ == '__main__':   
-    db_path = './sim/sim.db'
+    db_path = os.path.join('sim', 'sim.db')
     videos = ['./videos/test2/cam_L.mkv', './videos/test2/cam_R.mkv', './videos/test2/cam_F.mkv']
     positions = [(-354.58, 597.91, 12.217), (-664.41, -478.9, 267.55), (817.69, -170.64, 211.13)]
     rotations = [(88.327, -0.000009, 204.57), (72.327, 0.000007, -67.43), (72.327, -0.00002, -280.23)]
@@ -55,7 +55,7 @@ if __name__ == '__main__':
     setup_database(db_path)
     
     for cameraID in range(len(videos)):
-        directory = f'/sim/videos/{cameraID}/'
+        directory = os.path.join('sim', 'videos', str(cameraID))
         if (os.path.exists(directory)): shutil.rmtree(directory)
         os.makedirs(directory)
 
@@ -64,11 +64,11 @@ if __name__ == '__main__':
         success, next = cap.read()
         frame = 1
         while success:
-            img_path = directory + f'frame{frame}.png'
+            img_path = os.path.join(directory, f'frame{frame}.png')
             image = filter_motion(prev, next, 2)
             cv2.imwrite(img_path, image)
             
-            save_to_database(db_path, (
+            save_to_database(db_path, 
                 cameraID,
                 frame,
                 positions[cameraID][0],
@@ -79,7 +79,7 @@ if __name__ == '__main__':
                 rotations[cameraID][2],
                 fov,
                 img_path
-            ))
+            )
             
             prev = next
             frame += 1

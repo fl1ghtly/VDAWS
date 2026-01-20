@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import numpy as np
 from models import RawSensorData
@@ -89,6 +90,7 @@ def find_largest_window_in_threshold(values: list[float], threshold: float) -> t
     return (maxLeft, maxRight)
         
 if __name__ == '__main__':
-    batcher = Batcher('sim/sim.db', 0.2, soft_delete=True)
+    db_path = os.path.join('sim', 'sim.db')
+    batcher = Batcher(db_path, 0.2, soft_delete=True)
     output = batcher.batch()
     print(output)

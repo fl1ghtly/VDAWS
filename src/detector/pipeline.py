@@ -1,3 +1,4 @@
+import os
 import math
 import cv2
 import numpy as np
@@ -62,7 +63,7 @@ class DataPipeline:
         self.exporter.export(objects)
         
 if __name__ == '__main__':
-    db_path = '/sim/sim.db'
+    db_path = os.path.join('sim', 'sim.db')
     timestamp_threshold = 0.5
     max_distance = 10.0
     max_age = 5
