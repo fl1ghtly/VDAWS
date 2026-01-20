@@ -4,8 +4,19 @@ import os
 import shutil
 from extractor import filter_motion
 
-def save_to_database(db_path: str, data: tuple):
+def save_to_database(db_path: str, 
+                     id: int, 
+                     timestamp: float, 
+                     latitude: float, 
+                     altitude: float, 
+                     longitude: float, 
+                     rot_x: float, 
+                     rot_y: float, 
+                     rot_z: float, 
+                     fov: float, 
+                     image_path: str):
     with sqlite3.connect(db_path) as connection:
+        data = (id, timestamp, latitude, altitude, longitude, rot_x, rot_y, rot_z, fov, image_path)
         cursor = connection.cursor()
         
         cursor.execute("""
@@ -15,7 +26,7 @@ def save_to_database(db_path: str, data: tuple):
                        data
         )
 
-def _setup_database(db_path: str):
+def setup_database(db_path: str):
     with sqlite3.connect(db_path) as connection:
         cursor = connection.cursor()
         cursor.execute("DROP TABLE IF EXISTS SensorData")
@@ -41,10 +52,10 @@ if __name__ == '__main__':
     rotations = [(88.327, -0.000009, 204.57), (72.327, 0.000007, -67.43), (72.327, -0.00002, -280.23)]
     fov = 39.6
     
-    _setup_database(db_path)
+    setup_database(db_path)
     
     for cameraID in range(len(videos)):
-        directory = f'./sim/videos/{cameraID}/'
+        directory = f'/sim/videos/{cameraID}/'
         if (os.path.exists(directory)): shutil.rmtree(directory)
         os.makedirs(directory)
 

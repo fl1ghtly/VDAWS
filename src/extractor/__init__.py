@@ -1,1 +1,2 @@
 from extractor.motion_filter import filter_motion
+from extractor.preprocessor import save_to_database, setup_database
