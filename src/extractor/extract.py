@@ -1,40 +1,52 @@
 import os
+from pathlib import Path
 import shutil
 import requests
 import cv2
 import numpy as np
 from cv2.typing import MatLike
-import extractor
+from extractor import filter_motion, save_to_database, setup_database
 
-def get_latest_file(path: str) -> str | None:
-    if not os.path.exists():
+def get_latest_file(path: Path) -> Path | None:
+    if not os.path.exists(path):
         return None
     
     files = os.listdir(path)
-    paths = [os.path.join(path, base) for base in files]
+    paths = [path / base for base in files]
+    if len(paths) <= 0: return None
+    
     return max(paths, key=os.path.getctime)
 
 class Extractor:
-    def __init__(self, image_directory: str, database_path: str):
+    def __init__(self, image_directory: Path, database_path: Path):
         self.image_dir = image_directory
         self.db_path = database_path
-        self.urls: dict[str, tuple[str, str]] = {}
+        self.urls: dict[str, tuple[str, Path]] = {}
         self.url_count = 0
         
         self.setup()
         
     def setup(self):
-        db_basepath, _ = os.path.split(self.db_path)
-        os.makedirs(db_basepath)
-        extractor.setup_database(self.db_path)
+        os.makedirs(self.db_path.parent, exist_ok=True)
+        setup_database(self.db_path)
         
         if (os.path.exists(self.image_dir)): shutil.rmtree(self.image_dir)
         os.makedirs(self.image_dir)
 
     def add_url(self, url: str):
+        url_folder_dir = self.image_dir / str(self.url_count)
+        if (os.path.exists(url_folder_dir)): shutil.rmtree(url_folder_dir)
+
+        # Add url folder to images/
+        os.makedirs(url_folder_dir)
+        os.makedirs(url_folder_dir / 'preprocessed')
+        os.makedirs(url_folder_dir / 'processed')
+
+        # Add to map of urls
         self.urls[url] = (
             self.url_count,
-            os.path.join(self.image_dir, str(self.url_count)))
+            url_folder_dir)
+            
         self.url_count += 1
         
     def request_capture(self, url: str) -> MatLike | None:
@@ -68,9 +80,11 @@ class Extractor:
             
             # Get the latest unprocessed image in 
             # image_dir/{id}/preprocessed if it exists
-            path = os.path.join(basepath, 'preprocessed')
-            prev_img_path = get_latest_file(path)
-            cv2.imwrite(image, path)
+            preprocessed_path = basepath / 'preprocessed'
+            prev_img_path = get_latest_file(preprocessed_path)
+            
+            image_path = preprocessed_path / (str(sensor_data['timestamp']) + '.jpg')
+            cv2.imwrite(image_path, image)
 
             # Only filter motion once two images exist at a time
             if prev_img_path is None:
@@ -78,15 +92,15 @@ class Extractor:
             
             # Filter for motion and remove old unprocessed image
             prev = cv2.imread(prev_img_path, cv2.IMREAD_COLOR)
-            filtered = extractor.filter_motion(prev, image, 2)
+            filtered = filter_motion(prev, image, 2)
             os.remove(prev_img_path)
             
             # Save the filtered image
-            processed_path = os.path.join(basepath, 'processed', sensor_data['timestamp'] + '.jpg')
+            processed_path = basepath / 'processed' / (str(sensor_data['timestamp']) + '.jpg')
             cv2.imwrite(processed_path, filtered)
             
             # Save sensor data and filtered image path to database
-            extractor.save_to_database(self.db_path, 
+            save_to_database(self.db_path, 
                 id,
                 sensor_data['timestamp'],
                 sensor_data['position']['latitude'],
@@ -96,15 +110,16 @@ class Extractor:
                 sensor_data['rotation']['ry'],
                 sensor_data['rotation']['rz'],
                 sensor_data['fov'],
-                processed_path
+                str(processed_path)
             )
             
 if __name__ == '__main__':
-    extractor_folder = os.path.join('sim', 'extractor')
-    image_dir = os.path.join(extractor_folder, 'images')
-    db_path = os.path.join(extractor_folder, 'sim.db')
+    extractor_folder = Path('/sim') / 'extractor'
+    image_dir = extractor_folder / 'images'
+    db_path = extractor_folder / 'sim.db'
     extractor = Extractor(image_dir, db_path)
     
     extractor.add_url('http://192.168.4.1')
     
-    # extractor.extract_and_save_all()
+    for i in range(5):
+        extractor.extract_and_save_all()
