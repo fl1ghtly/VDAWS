@@ -5,31 +5,37 @@ from detector.ray import Ray, Rays
 MAX_RAY_STEPS = 512
 class VoxelTracer:
     voxel_grid: np.ndarray
-    voxel_size: float
+    voxel_sizes: float
     voxel_origin: np.ndarray
     grid_min: np.ndarray
     grid_max: np.ndarray
-    grid_size: int
+    grid_size: np.ndarray
 
-    def __init__(self, cells: int, voxel_size: float, center=np.zeros(3)):
-        self.voxel_grid = np.zeros((cells, cells, cells), dtype=np.uint32)
-        self.voxel_size = voxel_size
-        bottom_left_corner = -voxel_size * cells / 2
-        self.voxel_origin = np.full(3, bottom_left_corner) + center
-        self.grid_min = np.full(3, bottom_left_corner + center)
-        self.grid_max = np.full(3, -bottom_left_corner + center)
-        self.grid_size = cells
-        
+    def __init__(self, bottom_left: np.ndarray, top_right: np.ndarray, height: float, resolution: np.ndarray):
+        """
+        Args:
+            bottom_left (np.ndarray): [latitude_min, longitude_min]
+            top_right (np.ndarray): [latitude_max, longitude_max]
+            height (float): Total altitude from 0 to height
+            resolution (np.ndarray): [latitude_steps, longitude_steps, altitude_steps] (number of cells per axis)
+        """
+        self.grid_min = np.array([bottom_left[0], bottom_left[1], 0.0], dtype=np.float64)
+        self.grid_max = np.array([top_right[0], top_right[1], height], dtype=np.float64)
+        self.grid_size = resolution.astype(np.int64)
+
+        # Calculate size of voxel in degrees/meter for each axis
+        self.voxel_sizes = (self.grid_max - self.grid_min) / self.grid_size
+
+        self.voxel_grid = np.zeros(self.grid_size, dtype=np.uint64)
+    
     def add_grid_data(self, voxels: np.ndarray, data: np.ndarray):
         """Adds data (N, ) to every Voxel (N, 3) in the Voxel Grid"""
-        self.voxel_grid[voxels[..., 0], voxels[..., 1], voxels[..., 2]] += data
+        self.voxel_grid[voxels[..., 0], voxels[..., 1], voxels[..., 2]] += data.astype(np.uint64)
             
     def clear_grid_data(self) -> None:
         """Resets the Voxel Grid data to zero"""
-        self.voxel_grid = np.zeros((self.grid_size, 
-                                    self.grid_size, 
-                                    self.grid_size), 
-                                   dtype=np.uint32)
+        self.voxel_grid = np.zeros(self.grid_size, 
+                                   dtype=np.uint64)
         
     def raycast_into_voxels(self, ray: Ray) -> list[np.ndarray]:
         """Returns a list of all voxel indices intersected by the raycast"""
@@ -37,7 +43,7 @@ class VoxelTracer:
                                    self.grid_min, 
                                    self.grid_max, 
                                    self.grid_size, 
-                                   self.voxel_size)
+                                   self.voxel_sizes)
         
     def raycast_into_voxels_batch(self, rays: Rays) -> tuple[np.ndarray, np.ndarray]:
         """Returns a list of all voxel indices intersected by every raycast"""
@@ -45,35 +51,39 @@ class VoxelTracer:
                                    self.grid_min, 
                                    self.grid_max, 
                                    self.grid_size, 
-                                   self.voxel_size)
+                                   self.voxel_sizes)
 
-    def grid_to_voxel(self, ind: np.ndarray) -> np.ndarray:
-        """Returns the coordinates of the grid indices in voxel space"""
-        return self.grid_min + (ind + 0.5) * self.voxel_size
-    
+    def voxel_to_geo(self, ind: np.ndarray) -> np.ndarray:
+        """Returns the coordinates of the grid indices in [lat, lon, alt] coordinates"""
+        return self.grid_min + (ind + 0.5) * self.voxel_sizes
+        
     @staticmethod
     @njit
     def _raycast_numba(ray: Ray, grid_min: np.ndarray, 
-                       grid_max: np.ndarray, grid_size: int, 
-                       voxel_size: float) -> list[np.ndarray]:
-        voxels = [np.array((x, x, x)).astype(np.int32) for x in range(0)]
+                       grid_max: np.ndarray, grid_size: np.ndarray, 
+                       voxel_size: np.ndarray) -> list[np.ndarray]:
+        # Define voxels type for numba
+        voxels = [np.array((0, 0, 0)).astype(np.int64) for _ in range(0)]
+
         # Check if ray intersects voxel grid
         container = np.zeros(1)     # workaround for returning multiple types for numba
         intersected = ray_aabb(ray, grid_min, grid_max, container)
         if not intersected: return voxels
+
         t_entry = container[0]
         # Initialization
         # Floating point representation of grid entry position
-        start = ray.origin + ray.norm_dir * max(t_entry, 0.0)
+        start: np.ndarray = ray.origin + ray.norm_dir * max(t_entry, 0.0)
 
         # Traversal constants
-        step = np.sign(ray.norm_dir).astype(np.int32)
+        step = np.sign(ray.norm_dir).astype(np.int64)
         delta = voxel_size / np.abs(ray.norm_dir)
         
         # Indices of current voxel
-        current_voxel = np.floor((start - grid_min) / voxel_size).astype(np.int32)
+        current_voxel = np.floor((start - grid_min) / voxel_size).astype(np.int64)
+        
         # Clamp current voxel to grid
-        current_voxel = np.clip(current_voxel, 0, grid_size - 1)
+        current_voxel = np.clip(current_voxel, np.zeros(3).astype(np.int64), grid_size - 1)
 
         # Get next voxel boundary
         next_voxel = grid_min + (current_voxel + (step > 0)) * voxel_size
@@ -84,30 +94,29 @@ class VoxelTracer:
         tMax[ray.norm_dir == 0] = np.inf
 
         # Traversal
-        
         voxels.append(current_voxel.copy())
 
         while (True):
             # Find which axis has the smallest tMax and traverse on that axis
             if (tMax[0] < tMax[1] and tMax[0] < tMax[2]):
                 current_voxel[0] += step[0]
-                if (current_voxel[0] < 0 or current_voxel[0] >= grid_size): break
+                if (current_voxel[0] < 0 or current_voxel[0] >= grid_size[0]): break
                 tMax[0] += delta[0]
             elif (tMax[1] < tMax[2]):
                 current_voxel[1] += step[1]
-                if (current_voxel[1] < 0 or current_voxel[1] >= grid_size): break
+                if (current_voxel[1] < 0 or current_voxel[1] >= grid_size[1]): break
                 tMax[1] += delta[1]
             else:
                 current_voxel[2] += step[2]
-                if (current_voxel[2] < 0 or current_voxel[2] >= grid_size): break
+                if (current_voxel[2] < 0 or current_voxel[2] >= grid_size[2]): break
                 tMax[2] += delta[2]
             voxels.append(current_voxel.copy())
         return voxels
     
     @staticmethod
     def _raycast_batch(rays: Rays, grid_min: np.ndarray, 
-                       grid_max: np.ndarray, grid_size: int, 
-                       voxel_size: float) -> tuple[np.ndarray, np.ndarray]:
+                       grid_max: np.ndarray, grid_size: np.ndarray, 
+                       voxel_size: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         voxels = []
 
         # Check if ray intersects voxel grid
@@ -118,7 +127,7 @@ class VoxelTracer:
         starts = rays.origins + rays.norm_dirs * np.clip(t_entry, 0, None)[:, np.newaxis]
 
         # Traversal constants
-        steps = np.sign(rays.norm_dirs).astype(np.int32)
+        steps = np.sign(rays.norm_dirs).astype(np.int64)
         deltas = voxel_size / np.abs(rays.norm_dirs)
         
         # Filter out rays that don't intersect with the grid
@@ -127,9 +136,9 @@ class VoxelTracer:
         deltas = deltas[intersected]
         
         # Indices of current voxel
-        current_voxels = np.floor((starts - grid_min) / voxel_size).astype(np.int32)
+        current_voxels = np.floor((starts - grid_min) / voxel_size).astype(np.int64)
         # Clamp current voxel to grid
-        current_voxels = np.clip(current_voxels, 0, grid_size - 1)
+        current_voxels = np.clip(current_voxels, np.zeros(3).astype(np.int64), grid_size - 1)
 
         # Get next voxel boundary
         next_voxels = grid_min + (current_voxels + (steps > 0)) * voxel_size
@@ -231,3 +240,24 @@ def ray_aabb_batch(rays: Rays, boxMin: np.ndarray, boxMax: np.ndarray) -> tuple[
         tmax = np.nanmin(np.vstack((tmax, dmax)), axis=0)
 
     return tmax > np.clip(tmin, 0., None), tmin
+
+if __name__ == '__main__':
+    bottom_left = np.array([34.05, -118.24], dtype=np.float64)
+    top_right = np.array([35.05, -117.24], dtype=np.float64)
+    height = 5000.0
+    resolution = np.array([200, 200, 200])
+    
+    tracer = VoxelTracer(
+        bottom_left,
+        top_right,
+        height,
+        resolution
+    )
+    
+    test_ray = Ray(
+        np.array([34.5, -118.0, 1000.0], dtype=np.float64),
+        np.array([0.1, 0.1, -0.05], dtype=np.float64)
+    )
+    
+    voxels = tracer.raycast_into_voxels(test_ray)
+    
