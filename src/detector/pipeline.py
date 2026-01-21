@@ -69,7 +69,11 @@ if __name__ == '__main__':
     max_age = 5
     
     batcher = dt.Batcher(db_path, timestamp_threshold, soft_delete=True)
-    voxel_tracer = dt.VoxelTracer(GRID_SIZE, VOXEL_SIZE)
+    voxel_tracer = dt.VoxelTracer(
+        np.array([0, 0]),
+        np.array([300, 350]),
+        500,
+        np.array([200, 200, 200]))
     cluster_tracker = dt.ClusterTracker(max_distance, max_age)
     # exporter = dt.ExportToSQLite(db_path)
     exporter = dt.ExportToCLI()
