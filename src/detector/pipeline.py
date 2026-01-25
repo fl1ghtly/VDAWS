@@ -45,9 +45,13 @@ class DataPipeline:
             self.graph.update()
 
         extracted_voxels = dt.extract_percentile_index(self.voxel_tracer.voxel_grid, 99.9)
+        self.voxel_tracer.clear_grid_data()
+        # Skip this batch if no significant voxels are found
+        if extracted_voxels is None:
+            print('Skipping batch: No significant motion found')
+            return
         
         motion_voxels = np.transpose(extracted_voxels)
-        self.voxel_tracer.clear_grid_data()
 
         centroids = dt.get_cluster_centers(motion_voxels, EPS_CORNER)
         
