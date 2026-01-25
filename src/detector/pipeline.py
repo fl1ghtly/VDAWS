@@ -44,7 +44,9 @@ class DataPipeline:
             self.graph.add_voxels(self.voxel_tracer.voxel_grid, self.voxel_tracer.voxel_origin, VOXEL_SIZE)
             self.graph.update()
 
-        motion_voxels = np.transpose(dt.extract_percentile_index(self.voxel_tracer.voxel_grid, 99.9))
+        extracted_voxels = dt.extract_percentile_index(self.voxel_tracer.voxel_grid, 99.9)
+        
+        motion_voxels = np.transpose(extracted_voxels)
         self.voxel_tracer.clear_grid_data()
 
         centroids = dt.get_cluster_centers(motion_voxels, EPS_CORNER)
@@ -68,7 +70,8 @@ if __name__ == '__main__':
     max_distance = 10.0
     max_age = 5
     
-    batcher = dt.Batcher(db_path, timestamp_threshold, soft_delete=True)
+    # batcher = dt.SQLiteBatcher(db_path, timestamp_threshold, soft_delete=True)
+    batcher = dt.RedisBatcher("ESP32_data")
     voxel_tracer = dt.VoxelTracer(
         np.array([0, 0]),
         np.array([300, 350]),
@@ -80,5 +83,6 @@ if __name__ == '__main__':
     graph = dt.Graph()
     
     pipeline = DataPipeline(batcher, voxel_tracer, cluster_tracker, exporter)
-    for i in range(98):
+
+    while True:
         pipeline.run()
