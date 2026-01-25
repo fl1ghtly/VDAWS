@@ -18,10 +18,9 @@ class RedisBatcher():
     def batch(self) -> list[RawSensorData]:
         output: list[RawSensorData] = []
 
-        # Get batch
-        batch_json = self.redis.lpop(self.data_stream)
-
-        batch: list[dict] = json.loads(batch_json)
+        # Get batch from queue if it exists, otherwise block until data appears
+        batch_json = self.redis.brpop(self.data_stream, timeout=0)
+        batch: list[dict] = json.loads(batch_json[1])
         for data in batch:
             output.append(RawSensorData(
                 data['camera_id'],

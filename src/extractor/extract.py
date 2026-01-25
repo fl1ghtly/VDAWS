@@ -125,4 +125,5 @@ if __name__ == '__main__':
     
     while True:
         batch = extractor.extract_all()
+        if len(batch) <= 0: continue
         extractor.push_batch(batch)
