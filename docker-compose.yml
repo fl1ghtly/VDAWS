@@ -1,10 +1,21 @@
 services:
   extractor:
     build: ./src/extractor
+    volumes:
+      - ./sim:/sim
+    depends_on:
+      - redis
   detector:
     build: ./src/detector
     volumes:
       - ./sim:/sim
       - ./src/models:/src/models:ro
+    depends_on:
+      - redis
+      - extractor
   map:
     build: ./src/map
+  redis:
+    image: redis:alpine
+volumes:
+  sim:  # Create persistent volume even if container is removed
