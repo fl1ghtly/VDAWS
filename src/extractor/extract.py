@@ -5,7 +5,7 @@ import requests
 import cv2
 import numpy as np
 from cv2.typing import MatLike
-from extractor import filter_motion, save_to_database, setup_database
+from extractor import filter_motion, Exporter, ExportToRedis, ExportToSQLite
 
 def get_latest_file(path: Path) -> Path | None:
     if not os.path.exists(path):
@@ -18,17 +18,16 @@ def get_latest_file(path: Path) -> Path | None:
     return max(paths, key=os.path.getctime)
 
 class Extractor:
-    def __init__(self, image_directory: Path, database_path: Path):
+    def __init__(self, image_directory: Path, exporter: Exporter):
         self.image_dir = image_directory
-        self.db_path = database_path
         self.urls: dict[str, tuple[str, Path]] = {}
         self.url_count = 0
+        self.exporter = exporter
         
         self.setup()
         
     def setup(self):
-        os.makedirs(self.db_path.parent, exist_ok=True)
-        setup_database(self.db_path)
+        self.exporter.setup()
         
         if (os.path.exists(self.image_dir)): shutil.rmtree(self.image_dir)
         os.makedirs(self.image_dir)
@@ -65,7 +64,8 @@ class Extractor:
         if (response.status_code != 200): return None
         return  response.json()
 
-    def extract_and_save_all(self):
+    def extract_all(self) -> list[dict]:
+        batch = []
         for url, (id, basepath) in self.urls.items():
             image = self.request_capture(url, timeout=10)
             sensor_data = self.request_sensors(url, timeout=10)
@@ -92,34 +92,37 @@ class Extractor:
             
             # Filter for motion and remove old unprocessed image
             prev = cv2.imread(prev_img_path, cv2.IMREAD_COLOR)
-            filtered = filter_motion(prev, image, 2)
-            os.remove(prev_img_path)
+            filtered = filter_motion(prev, image, 250)
+            # os.remove(prev_img_path)
             
             # Save the filtered image
             processed_path = basepath / 'processed' / (str(sensor_data['timestamp']) + '.jpg')
             cv2.imwrite(processed_path, filtered)
             
-            # Save sensor data and filtered image path to database
-            save_to_database(self.db_path, 
-                id,
-                sensor_data['timestamp'],
-                sensor_data['position']['latitude'],
-                sensor_data['position']['altitude'],
-                sensor_data['position']['longitude'],
-                sensor_data['rotation']['rx'],
-                sensor_data['rotation']['ry'],
-                sensor_data['rotation']['rz'],
-                sensor_data['fov'],
-                str(processed_path)
-            )
+            # Save sensor data and filtered image path to redis
+            sensor_data['camera_id'] = id
+            sensor_data['image_path'] = str(processed_path)
+
+            batch.append(sensor_data)
+        
+        return batch
+    
+    def push_batch(self, batch: list[dict]) -> None:
+        self.exporter.export(batch)
             
 if __name__ == '__main__':
     extractor_folder = Path('/sim') / 'extractor'
     image_dir = extractor_folder / 'images'
-    db_path = extractor_folder / 'sim.db'
-    extractor = Extractor(image_dir, db_path)
+
+    # db_path = extractor_folder / 'sim.db'
+    # exporter = ExportToSQLite(db_path)
+
+    exporter = ExportToRedis("ESP32_data")
+
+    extractor = Extractor(image_dir, exporter)
     
     extractor.add_url('http://192.168.4.1')
     
-    for i in range(5):
-        extractor.extract_and_save_all()
+    while True:
+        batch = extractor.extract_all()
+        extractor.push_batch(batch)
