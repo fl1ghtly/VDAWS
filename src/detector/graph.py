@@ -88,8 +88,14 @@ class Graph:
 def extract_percentile_index(data: np.ndarray, percentile: float) -> np.ndarray:
     """Returns x, y, z arrays containing the indices of nonzero data points
     above a certain percentile."""
-    nonzero_data = np.nonzero(data)
-    if (len(nonzero_data) <= 0): nonzero_data
+    nonzero_indices = np.nonzero(data)
+    if len(nonzero_indices[0]) <= 0: 
+        return np.empty_like(data)
     
+    nonzero_data = data[nonzero_indices]
+    
+    # Calculate the minimum value for a data point to be above the percentile
     p = np.percentile(nonzero_data, percentile)
+    
+    # Return the indices of data that are above a percentile and are non zero
     return np.array(np.nonzero(data >= p))
