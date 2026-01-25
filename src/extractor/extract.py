@@ -49,8 +49,8 @@ class Extractor:
             
         self.url_count += 1
         
-    def request_capture(self, url: str) -> MatLike | None:
-        response = requests.get(url + '/capture')
+    def request_capture(self, url: str, *args, **kwargs) -> MatLike | None:
+        response = requests.get(url + '/capture', *args, **kwargs)
 
         if (response.status_code != 200): return None
 
@@ -59,16 +59,16 @@ class Extractor:
         
         return image
     
-    def request_sensors(self, url: str) -> dict | None:
-        response = requests.get(url + '/sensors')
+    def request_sensors(self, url: str, *args, **kwargs) -> dict | None:
+        response = requests.get(url + '/sensors', *args, **kwargs)
         
         if (response.status_code != 200): return None
         return  response.json()
 
     def extract_and_save_all(self):
         for url, (id, basepath) in self.urls.items():
-            image = self.request_capture(url)
-            sensor_data = self.request_sensors(url)
+            image = self.request_capture(url, timeout=10)
+            sensor_data = self.request_sensors(url, timeout=10)
             
             # Check if requests were successful
             if (image is None):
