@@ -5,26 +5,27 @@ from pathlib import Path
 import shutil
 from extractor import filter_motion
 
-def save_to_database(db_path: Path, 
-                     id: int, 
-                     timestamp: float, 
-                     latitude: float, 
-                     altitude: float, 
-                     longitude: float, 
-                     rot_x: float, 
-                     rot_y: float, 
-                     rot_z: float, 
-                     fov: float, 
-                     image_path: str):
+def save_to_database(db_path: Path, data: dict): 
     with sqlite3.connect(db_path) as connection:
-        data = (id, timestamp, latitude, altitude, longitude, rot_x, rot_y, rot_z, fov, image_path)
+        insert = (
+            data['id'], 
+            data['timestamp'], 
+            data['latitude'], 
+            data['altitude'], 
+            data['longitude'], 
+            data['rot_x'], 
+            data['rot_y'], 
+            data['rot_z'], 
+            data['fov'], 
+            data['image_path']
+        )
         cursor = connection.cursor()
         
         cursor.execute("""
                        INSERT INTO SensorData 
                        (CameraID, Timestamp, Latitude, Altitude, Longitude, RotationX, RotationY, RotationZ, FOV, ImagePath)
                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
-                       data
+                       insert
         )
 
 def setup_database(db_path: Path):

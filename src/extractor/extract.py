@@ -99,19 +99,10 @@ class Extractor:
             processed_path = basepath / 'processed' / (str(sensor_data['timestamp']) + '.jpg')
             cv2.imwrite(processed_path, filtered)
             
-            # Save sensor data and filtered image path to database
-            save_to_database(self.db_path, 
-                id,
-                sensor_data['timestamp'],
-                sensor_data['position']['latitude'],
-                sensor_data['position']['altitude'],
-                sensor_data['position']['longitude'],
-                sensor_data['rotation']['rx'],
-                sensor_data['rotation']['ry'],
-                sensor_data['rotation']['rz'],
-                sensor_data['fov'],
-                str(processed_path)
-            )
+            # Save sensor data and filtered image path to redis
+            sensor_data['camera_id'] = id
+            sensor_data['image_path'] = str(processed_path)
+            save_to_database(self.db_path, sensor_data)
             
 if __name__ == '__main__':
     extractor_folder = Path('/sim') / 'extractor'
