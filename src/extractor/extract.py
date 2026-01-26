@@ -23,14 +23,15 @@ class Extractor:
         self.urls: dict[str, tuple[str, Path]] = {}
         self.url_count = 0
         self.exporter = exporter
+        self.timeout = float(os.getenv('REQUEST_TIMEOUT_SEC'))
         
         self.setup()
         
     def setup(self):
         self.exporter.setup()
         
-        if (os.path.exists(self.image_dir)): shutil.rmtree(self.image_dir)
-        os.makedirs(self.image_dir)
+        # if (os.path.exists(self.image_dir)): shutil.rmtree(self.image_dir)
+        os.makedirs(self.image_dir, exist_ok=True)
 
     def add_url(self, url: str):
         url_folder_dir = self.image_dir / str(self.url_count)
@@ -67,8 +68,8 @@ class Extractor:
     def extract_all(self) -> list[dict]:
         batch = []
         for url, (id, basepath) in self.urls.items():
-            image = self.request_capture(url, timeout=10)
-            sensor_data = self.request_sensors(url, timeout=10)
+            image = self.request_capture(url, timeout=self.timeout)
+            sensor_data = self.request_sensors(url, timeout=self.timeout)
             
             # Check if requests were successful
             if (image is None):
@@ -93,7 +94,8 @@ class Extractor:
             # Filter for motion and remove old unprocessed image
             prev = cv2.imread(prev_img_path, cv2.IMREAD_COLOR)
             filtered = filter_motion(prev, image, 250)
-            # os.remove(prev_img_path)
+            # Delete unprocessed image
+            os.remove(prev_img_path)
             
             # Save the filtered image
             processed_path = basepath / 'processed' / (str(sensor_data['timestamp']) + '.jpg')
@@ -111,10 +113,10 @@ class Extractor:
         self.exporter.export(batch)
             
 if __name__ == '__main__':
-    extractor_folder = Path('/sim') / 'extractor'
+    extractor_folder = Path('/app') / 'extractor'
     image_dir = extractor_folder / 'images'
 
-    # db_path = extractor_folder / 'sim.db'
+    # db_path = Path('/app') / os.getenv('DB_NAME')
     # exporter = ExportToSQLite(db_path)
 
     exporter = ExportToRedis("ESP32_data")

@@ -1,6 +1,7 @@
 import os
 import math
 import cv2
+from pathlib import Path
 import numpy as np
 from typing import List
 from queue import Queue
@@ -37,8 +38,9 @@ class DataPipeline:
             raycast_intersections, data = self.voxel_tracer.raycast_into_voxels_batch(rays)
             self.voxel_tracer.add_grid_data(raycast_intersections, data)
             avg_timestamp += cameraData.timestamp
+            os.remove(cameraData.image_path)
         avg_timestamp /= len(batch)
-
+        
         # Optional Visualization
         if (self.graph):
             self.graph.add_voxels(self.voxel_tracer.voxel_grid, self.voxel_tracer.voxel_origin, VOXEL_SIZE)
@@ -69,22 +71,22 @@ class DataPipeline:
         self.exporter.export(objects)
         
 if __name__ == '__main__':
-    db_path = os.path.join('sim', 'sim.db')
-    timestamp_threshold = 0.5
-    max_distance = 10.0
-    max_age = 5
+    db_path = Path('/app') / os.getenv('DB_NAME')
     
-    # batcher = dt.SQLiteBatcher(db_path, timestamp_threshold, soft_delete=True)
+    # batcher = dt.SQLiteBatcher(db_path, 0.5, soft_delete=True)
     batcher = dt.RedisBatcher("ESP32_data")
     voxel_tracer = dt.VoxelTracer(
         np.array([0, 0]),
         np.array([300, 350]),
         500,
         np.array([200, 200, 200]))
-    cluster_tracker = dt.ClusterTracker(max_distance, max_age)
+    cluster_tracker = dt.ClusterTracker(
+        float(os.getenv('MAX_CLUSTER_DISTANCE')), 
+        int(os.getenv('MAX_CLUSTER_AGE'))
+    )
     # exporter = dt.ExportToSQLite(db_path)
     exporter = dt.ExportToCLI()
-    graph = dt.Graph()
+    # graph = dt.Graph()
     
     pipeline = DataPipeline(batcher, voxel_tracer, cluster_tracker, exporter)
 
