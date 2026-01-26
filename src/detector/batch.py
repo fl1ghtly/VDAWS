@@ -126,7 +126,7 @@ def find_largest_window_in_threshold(values: list[float], threshold: float) -> t
     return (maxLeft, maxRight)
         
 if __name__ == '__main__':
-    db_path = os.path.join('sim', 'sim.db')
+    db_path = os.path.join('app', 'sim.db')
     batcher = SQLiteBatcher(db_path, 0.2, soft_delete=True)
     output = batcher.batch()
     print(output)
