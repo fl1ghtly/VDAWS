@@ -2,8 +2,45 @@ import os
 import sqlite3
 import numpy as np
 from models import RawSensorData
+from typing import Protocol
+import redis
+import json
 
-class Batcher:
+class Batcher(Protocol):
+    def batch(self) -> list[RawSensorData]:
+        ...
+        
+class RedisBatcher():
+    def __init__(self, stream: str):
+        self.redis = redis.Redis(host='redis', port=6379, decode_responses=True)
+        self.data_stream = stream
+    
+    def batch(self) -> list[RawSensorData]:
+        output: list[RawSensorData] = []
+
+        # Get batch from queue if it exists, otherwise block until data appears
+        batch_json = self.redis.brpop(self.data_stream, timeout=0)
+        batch: list[dict] = json.loads(batch_json[1])
+        for data in batch:
+            output.append(RawSensorData(
+                data['camera_id'],
+                data['timestamp'],
+                (
+                    data['rotation']['rx'], 
+                    data['rotation']['ry'], 
+                    data['rotation']['rz']
+                ),
+                (
+                    data['position']['latitude'], 
+                    data['position']['altitude'], 
+                    data['position']['longitude']
+                ),
+                data['image_path'],
+                data['fov']
+            ))
+        return output
+            
+class SQLiteBatcher:
     def __init__(self, path: str, threshold: float, soft_delete: bool = False):
         self.db_path = path
         self.threshold = threshold
@@ -56,7 +93,6 @@ class Batcher:
                     )
                 else:
                     cursor.executemany('DELETE FROM SensorData WHERE RowID = ?', delete_ids)
-                # TODO delete images
         except sqlite3.Error as e:
             print(f'Error {e} occurred')
         finally:
@@ -90,7 +126,7 @@ def find_largest_window_in_threshold(values: list[float], threshold: float) -> t
     return (maxLeft, maxRight)
         
 if __name__ == '__main__':
-    db_path = os.path.join('sim', 'sim.db')
-    batcher = Batcher(db_path, 0.2, soft_delete=True)
+    db_path = os.path.join('app', 'sim.db')
+    batcher = SQLiteBatcher(db_path, 0.2, soft_delete=True)
     output = batcher.batch()
     print(output)
