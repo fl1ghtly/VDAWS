@@ -2,22 +2,19 @@ import sys
 import math
 import time
 import threading
-import pyshark 
+import asyncio
+import pyshark
 
 # --- VELOCITY MATH HELPER ---
 def calculate_velocity_vector(speed_h, direction_deg, speed_v):
     """
     Converts Speed (magnitude) and Direction (degrees) into a 3D vector (vx, vy, vz).
-    Assumes Direction 0° is North, 90° is East.
+    Navigation: 0° is North (Positive Y), 90° is East (Positive X).
     """
-    # Convert degrees to radians
-    # Standard math: 0 is East. Navigation: 0 is North.
-    # We treat 0 deg as North (positive Y), 90 deg as East (positive X).
     rads = math.radians(direction_deg)
-    
-    vx = speed_h * math.sin(rads) # East component
-    vy = speed_h * math.cos(rads) # North component
-    vz = speed_v                  # Vertical component
+    vx = speed_h * math.sin(rads) # East
+    vy = speed_h * math.cos(rads) # North
+    vz = speed_v                  # Vertical
     return vx, vy, vz
 
 # --- THREAD RUNNER ---
@@ -31,55 +28,79 @@ def run_sniffer_thread(object_manager, interface='Wi-Fi'):
 
 # --- MAIN LOOP ---
 def sniff_loop(object_manager, interface):
+    # --- CRITICAL FIX: INITIALIZE EVENT LOOP ---
+    # Pyshark uses asyncio. When running in a separate thread, 
+    # we must explicitly create a new event loop for that thread.
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    # -------------------------------------------
+
     print(f"[Sniffer] Starting background capture on interface: {interface}...")
     
+    # Cache to store data for MAC addresses (since ID and Location often come in different packets)
+    drone_cache = {}
+
     try:
-        # 'display_filter' ensures we only process Drone ID packets (saving CPU)
+        # Filter for OpendroneID. 
         capture = pyshark.LiveCapture(interface=interface, display_filter='opendroneid')
 
         for packet in capture.sniff_continuously():
             try:
-                # Check if the layer exists
                 if not hasattr(packet, 'opendroneid'):
                     continue
 
                 layer = packet.opendroneid
-
-                # 1. Extract ID (Required)
-                # 'basic_id_id' is the field name for the Serial Number / ID
-                raw_id = getattr(layer, 'basic_id_id', None)
                 
-                # If we didn't get a Basic ID, we can't track it. Skip.
-                if not raw_id:
-                    continue 
-
-                # 2. Extract Position
-                # Use getattr with defaults to prevent crashing on partial packets
-                lat = float(getattr(layer, 'location_latitude', 0.0))
-                lon = float(getattr(layer, 'location_longitude', 0.0))
-                alt = float(getattr(layer, 'location_geodetic_altitude', 0.0))
-
-                # 3. Extract Velocity Data
-                speed_h = float(getattr(layer, 'location_speed_horizontal', 0.0))
-                direction = float(getattr(layer, 'location_direction', 0.0))
-                speed_v = float(getattr(layer, 'location_speed_vertical', 0.0))
-
-                # Calculate Vector Components
-                vx, vy, vz = calculate_velocity_vector(speed_h, direction, speed_v)
-
-                # 4. Update the Manager
-                # This sends the data safely to the map's storage
-                object_manager.update_object(
-                    id=str(raw_id),
-                    lat=lat, lon=lon, alt=alt,
-                    vx=vx, vy=vy, vz=vz
-                )
+                # Get the source MAC address to link messages together
+                source_mac = getattr(packet, 'wlan', None).sa if hasattr(packet, 'wlan') else "unknown_mac"
                 
-            except Exception as parse_err:
-                # UDP packets can sometimes be malformed or partial, ignore single packet errors
-                # print(f"[Sniffer] Parse Error: {parse_err}")
+                if source_mac not in drone_cache:
+                    drone_cache[source_mac] = {'id': None, 'last_update': 0}
+
+                # --- MESSAGE TYPE 1: BASIC ID (contains Serial Number) ---
+                if hasattr(layer, 'basic_id_id'):
+                    raw_id = layer.basic_id_id
+                    drone_cache[source_mac]['id'] = str(raw_id)
+
+                # --- MESSAGE TYPE 2: LOCATION (contains Lat/Lon/Alt/Speed) ---
+                if hasattr(layer, 'location_latitude'):
+                    lat = float(layer.location_latitude)
+                    lon = float(layer.location_longitude)
+                    alt = float(layer.location_geodetic_altitude)
+                    
+                    speed_h = float(getattr(layer, 'location_speed_horizontal', 0.0))
+                    direction = float(getattr(layer, 'location_direction', 0.0))
+                    speed_v = float(getattr(layer, 'location_speed_vertical', 0.0))
+                    
+                    vx, vy, vz = calculate_velocity_vector(speed_h, direction, speed_v)
+                    
+                    # Update cache
+                    drone_cache[source_mac].update({
+                        'lat': lat, 'lon': lon, 'alt': alt,
+                        'vx': vx, 'vy': vy, 'vz': vz,
+                        'last_update': time.time()
+                    })
+
+                # --- UPDATE MANAGER ---
+                # Only push to object manager if we have BOTH an ID and a recent Location
+                cache_entry = drone_cache[source_mac]
+                
+                if cache_entry['id'] and 'lat' in cache_entry:
+                    # Send to main tracking system
+                    object_manager.update_object(
+                        id=cache_entry['id'],
+                        lat=cache_entry['lat'],
+                        lon=cache_entry['lon'],
+                        alt=cache_entry['alt'],
+                        vx=cache_entry.get('vx', 0.0),
+                        vy=cache_entry.get('vy', 0.0),
+                        vz=cache_entry.get('vz', 0.0)
+                    )
+
+            except Exception:
+                # Ignore partial packet errors
                 continue
 
     except Exception as e:
         print(f"[Sniffer] CRITICAL ERROR: {e}")
-        print(f"Ensure '{interface}' is in Monitor Mode if on Linux, or supported on Windows.")
+        print(f"Ensure '{interface}' is correct. (Windows: 'Wi-Fi', Linux: 'wlan0' or 'mon0')")
