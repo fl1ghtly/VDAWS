@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 from models.sensor_data import RawSensorData, CameraData
 from numba import njit
-from detect.ray import Rays
+from detector.ray import Rays
         
 def process_camera(rawData: RawSensorData):
     height, width, _ = cv2.imread(rawData.image_path).shape

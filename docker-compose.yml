@@ -1,0 +1,26 @@
+services:
+  extractor:
+    build: ./src/extractor
+    env_file:
+      - .env.dev
+    volumes:
+      - ./shared:/app
+    depends_on:
+      - redis
+    restart: on-failure
+  detector:
+    build: ./src/detector
+    env_file:
+      - .env.dev
+    volumes:
+      - ./shared:/app
+      - ./src/models:/src/models:ro
+    depends_on:
+      - redis
+      - extractor
+  # map:
+  #   build: ./src/map
+  redis:
+    image: redis:alpine
+volumes:
+  shared:

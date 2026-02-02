@@ -25,6 +25,7 @@ class ClusterTracker:
             best_id_match: int | None = None
             min_distance = float('inf')
             
+            # TODO fix issue when max_distance is too large and multiple objects are assigned to a single ID
             # Check the last position of every centroid and get the best match
             for hist_id, hist in self.cluster_history.items():
                     last_centroid = hist['centroids'][-1]

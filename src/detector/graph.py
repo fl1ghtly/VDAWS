@@ -1,6 +1,6 @@
 import pyvista as pv
 import numpy as np
-from detect.ray import Ray
+from detector.ray import Ray
 
 class Graph:
     plotter: pv.Plotter
@@ -39,30 +39,30 @@ class Graph:
     def close_gif(self):
         self.plotter.close()
         
-    def add_voxels(self, voxels: np.ndarray, origin: np.ndarray, size: float) -> None:
+    def add_voxels(self, voxel_grid: np.ndarray, origin: np.ndarray, voxel_size: np.ndarray) -> None:
         if self.show_grid:
-            self._create_grid(voxels, origin, size)
+            self._create_grid(voxel_grid, origin, voxel_size)
         else:
-            self._create_point_cloud(voxels, origin, size)
+            self._create_point_cloud(voxel_grid, origin, voxel_size)
     
-    def add_ray(self, ray: Ray, color: str, reversed=False) -> None:
+    def add_ray(self, ray: Ray, color: str, reversed=False, scale: float=1.0) -> None:
         if not self.show_ray: return
         rev = -1 if reversed else 1
-        line = pv.Line(ray.origin, ray.origin + ray.norm_dir * 1000 * rev)
+        line = pv.Line(ray.origin, ray.origin + ray.norm_dir * scale * rev)
         self.plotter.add_mesh(line, 
                               color=color, 
                               line_width=2,
                               reset_camera=False)      
     
-    def _create_point_cloud(self, voxels: np.ndarray, origin: np.ndarray, size: float):
+    def _create_point_cloud(self, voxels: np.ndarray, origin: np.ndarray, voxel_size: np.ndarray):
         # Points are the (x, y, z) of the center of each voxel
-        voxel_center = np.full(3, size / 2)
+        voxel_center = np.full(3, voxel_size / 2)
         if self.show_top_percentile:
             ind = extract_percentile_index(voxels, 99.9)
         else:
             ind = np.nonzero(voxels)
-        points = np.transpose(ind) * size + voxel_center + origin
-
+        points = np.transpose(ind) * voxel_size + voxel_center + origin
+        
         if len(points) <= 0:
             return
 
@@ -76,17 +76,29 @@ class Graph:
                                 name="point_cloud",
                                 reset_camera=False)
     
-    def _create_grid(self, voxels: np.ndarray, origin: np.ndarray, size: float):
+    def _create_grid(self, voxel_grid: np.ndarray, origin: np.ndarray, voxel_size: np.ndarray):
         grid = pv.ImageData()
-        grid.dimensions = np.array(voxels.shape) + 1
-        grid.spacing = (size, size, size)
+        grid.dimensions = np.array(voxel_grid.shape) + 1
+        grid.spacing = voxel_size
         grid.origin = origin
-        grid.cell_data['Values'] = voxels.flatten(order="F")
+        grid.cell_data['Values'] = voxel_grid.flatten(order="F")
 
         self.plotter.add_mesh(grid, show_edges=True, reset_camera=False)
         
-def extract_percentile_index(data: np.ndarray, percentile: float) -> np.ndarray:
+def extract_percentile_index(data: np.ndarray, percentile: float) -> np.ndarray | None:
     """Returns x, y, z arrays containing the indices of nonzero data points
     above a certain percentile."""
-    p = np.percentile(data[data != 0], percentile)
+    nonzero_indices = np.nonzero(data)
+    if len(nonzero_indices[0]) <= 0: 
+        return None
+    
+    nonzero_data = data[nonzero_indices]
+    
+    # Calculate the minimum value for a data point to be above the percentile
+    p = np.percentile(nonzero_data, percentile)
+    
+    if p <= 0:
+        return None
+    
+    # Return the indices of data that are above a percentile and are non zero
     return np.array(np.nonzero(data >= p))

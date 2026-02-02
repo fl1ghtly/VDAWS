@@ -45,6 +45,9 @@ __pycache__/
 # debug information files
 *.dwo
 
+*.env.*
+
 # Simulation Data
 videos/
 sim/
+shared/

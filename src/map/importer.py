@@ -1,3 +1,4 @@
+import os
 from typing import List, Protocol
 from models.sensor_data import ObjectData
 import sqlite3
@@ -48,7 +49,7 @@ class ExtractFromDB:
         return output
     
 if __name__ == '__main__':
-    db_path = './sim/sim.db'
+    db_path = os.path.join('sim', 'sim.db')
     db_extractor = ExtractFromDB(db_path, soft_delete=True)
 
     print(db_extractor.extract())
