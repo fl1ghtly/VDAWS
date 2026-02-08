@@ -13,4 +13,4 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY . .
-CMD ["python", "pipeline.py"]
+CMD ["fastapi", "run", "pipeline.py", "--port", "80"]
