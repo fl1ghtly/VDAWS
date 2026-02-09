@@ -9,6 +9,7 @@ import sys
 import os
 import numpy as np
 import time
+from flask import Flask, request, jsonify
 
 # --- SETUP PATHS ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -26,6 +27,14 @@ CENTER_LON = -122.43
 TOTAL_FRAMES = 100
 PATH_MOVEMENT_SCALE = 1.5 
 WIFI_INTERFACE = 'Wi-Fi' 
+
+# --- GLOBAL STATE FOR GRID ---
+# Stores the latest grid parameters received from the detector
+GRID_STATE = {
+    "min": None,
+    "max": None,
+    "active": False
+}
 
 # --- INITIALIZE MANAGERS ---
 manager = ObjectManager(timeout_seconds=5)
@@ -61,9 +70,31 @@ simulated_drones = [
     FlyingObject.create_with_id(103, CENTER_LAT, CENTER_LON, 800.0, 0.0, 0.0, 0.0, current_time)
 ]
 
-# --- DASHBOARD ---
+# --- DASHBOARD APP ---
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
+server = app.server # Expose the server for the API route
 
+# --- API ENDPOINT ---
+# Receives the grid parameters from the detector/sniffer
+@server.route('/update_parameters', methods=['POST'])
+def update_parameters():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "error", "message": "No JSON data provided"}), 400
+            
+        # Update the global state
+        GRID_STATE["min"] = data.get("grid_min")
+        GRID_STATE["max"] = data.get("grid_max")
+        GRID_STATE["active"] = True
+        
+        print(f"[API] Grid Updated: Min={GRID_STATE['min']}, Max={GRID_STATE['max']}")
+        return jsonify({"status": "success", "message": "Grid parameters updated"}), 200
+    except Exception as e:
+        print(f"[API Error] {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# --- LAYOUT ---
 app.layout = dbc.Container([
     # --- STORE FOR FILTER STATE ---
     dcc.Store(id='filter-store', data=0),
@@ -231,6 +262,35 @@ def update_dashboard(n, min_velocity):
             center={"lat": center_lat, "lon": center_lon}
         )
 
+    # --- DRAW GRID RECTANGLE ---
+    if GRID_STATE["active"] and GRID_STATE["min"] and GRID_STATE["max"]:
+        # 1. Get Grid Coordinates (Meters from origin)
+        # Using [x, y] where x aligns with Lat (North) and y aligns with Lon (East)
+        # based on previous collision_detector logic.
+        min_x, min_y = GRID_STATE["min"]  # e.g. [250.6, 360.2]
+        max_x, max_y = GRID_STATE["max"]  # e.g. [400.96, 504.5]
+
+        # 2. Define the 5 points of a rectangle (closing the loop)
+        # Sequence: BL -> TL -> TR -> BR -> BL
+        box_x = [min_x, max_x, max_x, min_x, min_x]
+        box_y = [min_y, min_y, max_y, max_y, min_y]
+
+        # 3. Convert Meters -> Lat/Lon (using CENTER_LAT/LON as the 0,0 reference)
+        # Lat change = x_meters / 111000 
+        # Lon change = y_meters / 88000
+        grid_lats = [CENTER_LAT + (x / 111000) for x in box_x]
+        grid_lons = [CENTER_LON + (y / 88000) for y in box_y]
+
+        # 4. Add the Grid Trace to the Map
+        fig.add_trace(go.Scattermapbox(
+            lat=grid_lats,
+            lon=grid_lons,
+            mode='lines',
+            line=dict(width=2, color='#00FF00', dash='dot'), # Green Dotted Box
+            name='Detection Grid',
+            hoverinfo='none'
+        ))
+
     # TRAILS
     if trail_lats:
         fig.add_trace(go.Scattermapbox(
@@ -281,4 +341,4 @@ def update_dashboard(n, min_velocity):
     return fig, table_data, status_html, alert_html, badge_text, badge_class
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, port=80)
