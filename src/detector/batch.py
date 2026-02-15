@@ -26,9 +26,9 @@ class RedisBatcher():
                 data['camera_id'],
                 data['timestamp'],
                 (
-                    data['rotation']['rx'], 
-                    data['rotation']['ry'], 
-                    data['rotation']['rz']
+                    data['orientation']['roll'], 
+                    data['orientation']['pitch'], 
+                    data['orientation']['yaw']
                 ),
                 (
                     data['position']['latitude'], 
@@ -71,7 +71,7 @@ class SQLiteBatcher:
                     output.append(RawSensorData(
                         row['CameraID'],
                         row['Timestamp'],
-                        np.array([row['RotationX'], row['RotationY'], row['RotationZ']]),
+                        np.array([row['Roll'], row['Pitch'], row['Yaw']]),
                         np.array([row['Latitude'], row['Altitude'], row['Longitude']]),
                         row['ImagePath'],
                         row['FOV']

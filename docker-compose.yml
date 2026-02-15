@@ -18,6 +18,8 @@ services:
     depends_on:
       - redis
       - extractor
+    ports:
+      - 80:80
   # map:
   #   build: ./src/map
   redis:
