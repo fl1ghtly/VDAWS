@@ -123,7 +123,8 @@ if __name__ == '__main__':
 
     extractor = Extractor(image_dir, exporter)
     
-    extractor.add_url('http://192.168.4.1')
+    # URL to ESP32 is the Husarnet Device name
+    extractor.add_url('http://esp32-cam1')
     
     while True:
         batch = extractor.extract_all()
