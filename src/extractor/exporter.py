@@ -36,9 +36,9 @@ class ExportToSQLite():
                     data['position']['latitude'], 
                     data['position']['altitude'], 
                     data['position']['longitude'], 
-                    data['rotation']['rx'], 
-                    data['rotation']['ry'], 
-                    data['rotation']['rz'], 
+                    data['orientation']['roll'], 
+                    data['orientation']['pitch'], 
+                    data['orientation']['yaw'], 
                     data['fov'], 
                     data['image_path']
                 )
@@ -46,7 +46,7 @@ class ExportToSQLite():
                 
                 cursor.execute("""
                             INSERT INTO SensorData 
-                            (CameraID, Timestamp, Latitude, Altitude, Longitude, RotationX, RotationY, RotationZ, FOV, ImagePath)
+                            (CameraID, Timestamp, Latitude, Altitude, Longitude, Roll, Pitch, Yaw, FOV, ImagePath)
                             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
                             insert
                 )
@@ -63,9 +63,9 @@ class ExportToSQLite():
                 Latitude REAL NOT NULL, 
                 Longitude REAL NOT NULL, 
                 Altitude REAL NOT NULL, 
-                RotationX REAL NOT NULL, 
-                RotationY REAL NOT NULL, 
-                RotationZ REAL NOT NULL, 
+                Roll REAL NOT NULL, 
+                Pitch REAL NOT NULL, 
+                Yaw REAL NOT NULL, 
                 FOV REAL NOT NULL, 
                 ImagePath TEXT NOT NULL,
                 isDeleted INTEGER

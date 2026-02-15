@@ -6,7 +6,7 @@ from typing import Literal
 class RawSensorData:
     cam_id: int
     timestamp: float
-    # Rotation in degrees
+    # Rotation in degrees (roll, pitch, yaw)
     rotation: np.ndarray[tuple[Literal[1], Literal[3]]]
     position: np.ndarray[tuple[Literal[1], Literal[3]]]
     image_path: str
@@ -16,7 +16,7 @@ class RawSensorData:
 class CameraData:
     cam_id: int
     timestamp: float
-    # Rotation in radians
+    # Rotation in radians (roll, pitch, yaw)
     rotation: np.ndarray[tuple[Literal[1], Literal[3]]]
     position: np.ndarray[tuple[Literal[1], Literal[3]]]
     image_path: str
