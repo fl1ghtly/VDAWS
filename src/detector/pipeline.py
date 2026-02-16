@@ -21,6 +21,13 @@ VOXEL_SIZE = 10.0
 EPS_ADJACENT = VOXEL_SIZE
 EPS_CORNER = math.sqrt(3) * VOXEL_SIZE
 
+# Json Encoder for numpy arrays
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+    
 class DataPipeline:
     def __init__(self, batcher: dt.Batcher, voxel_tracer: dt.VoxelTracer, cluster_tracker: dt.ClusterTracker, exporter: dt.Exporter, graph: dt.Graph | None = None):
         self.batcher = batcher
@@ -135,7 +142,7 @@ async def event_generator(request: Request):
             # Don't block thread running data processing
             data = data_queue.get_nowait()
             # SSE format is 'data: <contents>\n\n'
-            yield f'data: {json.dumps(data)}\n\n'
+            yield f'data: {json.dumps(data, cls=NumpyEncoder)}\n\n'
         except Empty:
             # Wait some time for data to arrive
             await asyncio.sleep(0.1)
