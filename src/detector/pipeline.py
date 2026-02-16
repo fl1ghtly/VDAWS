@@ -52,7 +52,7 @@ class DataPipeline:
         
         # Optional Visualization
         if (self.graph):
-            self.graph.add_voxels(self.voxel_tracer.voxel_grid, self.voxel_tracer.voxel_origin, VOXEL_SIZE)
+            self.graph.add_voxels(self.voxel_tracer.voxel_grid, self.voxel_tracer.grid_min, VOXEL_SIZE)
             self.graph.update()
 
         extracted_voxels = dt.extract_percentile_index(self.voxel_tracer.voxel_grid, 99.9)

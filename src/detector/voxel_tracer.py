@@ -6,7 +6,6 @@ MAX_RAY_STEPS = 512
 class VoxelTracer:
     voxel_grid: np.ndarray
     voxel_sizes: float
-    voxel_origin: np.ndarray
     grid_min: np.ndarray
     grid_max: np.ndarray
     grid_size: np.ndarray
