@@ -1,6 +1,15 @@
+import threading
+import asyncio
 import pyvista as pv
 import numpy as np
 from detector.ray import Ray
+from pyvista.trame.ui import plotter_ui
+from trame.app import get_server
+from trame.ui.vuetify3 import SinglePageLayout
+
+pv.start_xvfb()
+
+pv.OFF_SCREEN = True
 
 class Graph:
     plotter: pv.Plotter
@@ -11,10 +20,29 @@ class Graph:
         self.show_top_percentile = show_top_percentile
         self.point_size = point_size
         self.plotter = pv.Plotter(*args, **kwargs)
+
+        # Initialize trame server
+        self.server = get_server()
+
+        with SinglePageLayout(self.server) as layout:
+            layout.title.set_text("3D Voxel Detector")
+            with layout.content:
+                self.view = plotter_ui(self.plotter)
         
     def show(self) -> None:
         self.plotter.show_grid() # type: ignore
-        self.plotter.show(interactive_update=True)
+
+        # Initialize the render
+        self.plotter.iren.initialize()
+        
+        def _start_server():
+            # Let trame have its own asyncio event loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            # Start webserver on port 8080
+            self.server.start(host="0.0.0.0", port=8080, thread=True, open_browser=True)
+        
+        threading.Thread(target=_start_server, daemon=True).start()
         
     def update(self, title: str | None = None) -> None:
         """Updates the plot. Optional argument to change the title

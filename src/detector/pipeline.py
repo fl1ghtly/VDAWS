@@ -82,7 +82,12 @@ class DataPipeline:
         return objects
         
     def run_continously(self):
-        while self.is_running:
+        # Setup asyncio event thread for this thread
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+        print("Detector System running in background...")
+        while True:
+            if not self.is_running: continue
             try:
                 objects = self.run()
 
@@ -119,6 +124,7 @@ data_queue: Queue[dict] = Queue(maxsize=20)
 async def event_generator(request: Request):
     """Generate SSE formatted strings"""
     pipeline.is_running = True
+    print("Stream requested, starting detection")
     while True:
         # Check if frontend is disconnected to stop generating
         if await request.is_disconnected():
@@ -154,10 +160,11 @@ async def update_parameters(settings: DetectorParameters):
         }
     }
 
+
 # db_path = Path('/app') / os.getenv('DB_NAME')
 # batcher = dt.SQLiteBatcher(db_path, 0.5, soft_delete=True)
 # exporter = dt.ExportToSQLite(db_path)
-# graph = dt.Graph()
+
 batcher = dt.RedisBatcher("ESP32_data")
 voxel_tracer = dt.VoxelTracer(
     np.array([0, 0]),
@@ -169,6 +176,7 @@ cluster_tracker = dt.ClusterTracker(
     int(os.getenv('MAX_CLUSTER_AGE'))
 )
 exporter = dt.ExportToCLI()
-pipeline = DataPipeline(batcher, voxel_tracer, cluster_tracker, exporter)
+graph = dt.Graph()
+pipeline = DataPipeline(batcher, voxel_tracer, cluster_tracker, exporter, graph)
     
 lifespan(api_app)

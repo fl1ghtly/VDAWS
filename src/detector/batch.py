@@ -71,7 +71,7 @@ class SQLiteBatcher:
                     output.append(RawSensorData(
                         row['CameraID'],
                         row['Timestamp'],
-                        np.array([row['Roll'], row['Pitch'], row['Yaw']]),
+                        np.array([row['RotationX'], row['RotationY'], row['RotationZ']]),
                         np.array([row['Latitude'], row['Altitude'], row['Longitude']]),
                         row['ImagePath'],
                         row['FOV']
@@ -94,7 +94,7 @@ class SQLiteBatcher:
                 else:
                     cursor.executemany('DELETE FROM SensorData WHERE RowID = ?', delete_ids)
         except sqlite3.Error as e:
-            print(f'Error {e} occurred')
+            print(f'SQLite Batch Error {e} occurred')
         finally:
             return output
         

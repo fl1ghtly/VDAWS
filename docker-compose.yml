@@ -19,7 +19,8 @@ services:
       - redis
       - extractor
     ports:
-      - 80:80
+      - 80:80 # webserver
+      - 8080:8080 # trame/pyvista plotting
   # map:
   #   build: ./src/map
   redis:
