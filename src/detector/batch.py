@@ -8,6 +8,22 @@ import json
 
 class Batcher(Protocol):
     def batch(self) -> list[RawSensorData]:
+        """
+        Retrieves and consumes a batch of sensor data from the data source.
+        
+        Returns:
+            list[RawSensorData]: A list of the retrieved sensor data.
+        """
+        ...
+        
+    def peek(self) -> list[RawSensorData]:
+        """
+        Retrieves a batch of sensor data without removing or altering it 
+        in the data source.
+        
+        Returns:
+            list[RawSensorData]: A list of the retrieved sensor data.
+        """
         ...
         
 class RedisBatcher():
@@ -21,6 +37,35 @@ class RedisBatcher():
         # Get batch from queue if it exists, otherwise block until data appears
         batch_json = self.redis.brpop(self.data_stream, timeout=0)
         batch: list[dict] = json.loads(batch_json[1])
+        for data in batch:
+            output.append(RawSensorData(
+                data['camera_id'],
+                data['timestamp'],
+                (
+                    data['orientation']['roll'], 
+                    data['orientation']['pitch'], 
+                    data['orientation']['yaw']
+                ),
+                (
+                    data['position']['latitude'], 
+                    data['position']['altitude'], 
+                    data['position']['longitude']
+                ),
+                data['image_path'],
+                data['fov']
+            ))
+        return output
+
+    def peek(self) -> list[RawSensorData]:
+        output: list[RawSensorData] = []
+
+        # Get batch from queue without popping, nonblocking
+        batch_json = self.redis.lindex(self.data_stream, -1)
+
+        if not batch_json:
+            return output
+        
+        batch: list[dict] = json.loads(batch_json)
         for data in batch:
             output.append(RawSensorData(
                 data['camera_id'],
@@ -95,6 +140,46 @@ class SQLiteBatcher:
                     cursor.executemany('DELETE FROM SensorData WHERE RowID = ?', delete_ids)
         except sqlite3.Error as e:
             print(f'SQLite Batch Error {e} occurred')
+        finally:
+            return output
+
+    def peek(self) -> list[RawSensorData]:
+        output: list[RawSensorData] = []
+        try:
+            with sqlite3.connect(self.db_path) as connection:
+                # Convert cursor output into a dictionary instead of tuple
+                connection.row_factory = sqlite3.Row
+                cursor = connection.cursor()
+
+                # Get the oldest sensor data for each camera
+                cursor.execute("""
+                    SELECT *, MIN(Timestamp)
+                    FROM SensorData
+                    WHERE isDeleted IS NULL
+                    GROUP BY CameraID
+                    ORDER BY Timestamp ASC
+                """)
+
+                timestamps: list[float] = []
+                for row in cursor:
+                    timestamps.append(row['Timestamp'])
+                    output.append(RawSensorData(
+                        row['CameraID'],
+                        row['Timestamp'],
+                        np.array([row['RotationX'], row['RotationY'], row['RotationZ']]),
+                        np.array([row['Latitude'], row['Altitude'], row['Longitude']]),
+                        row['ImagePath'],
+                        row['FOV']
+                    ))
+                    
+                if not timestamps:
+                    return output
+                
+                left, right = find_largest_window_in_threshold(timestamps, self.threshold)
+                # Select only the rows that are in the window
+                output = output[left:right + 1]
+        except sqlite3.Error as e:
+            print(f'SQLite Peek Error {e} occurred')
         finally:
             return output
         

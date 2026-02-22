@@ -167,6 +167,22 @@ async def update_parameters(settings: DetectorParameters):
         }
     }
 
+@api_app.get('/cameras')
+async def get_cameras(request: Request):
+    # Look at the next batch of RawSensorData
+    batch = pipeline.batcher.peek()
+    
+    cameras_info = []
+    for data in batch:
+        cameras_info.append({
+            "cam_id": data.cam_id,
+            "position": data.position.tolist(),
+            "orientation": data.rotation.tolist(),
+            "fov": data.fov,
+            "timestamp": data.timestamp
+        })
+        
+    return {"cameras": cameras_info}
 
 # db_path = Path('/app') / os.getenv('DB_NAME')
 # batcher = dt.SQLiteBatcher(db_path, 0.5, soft_delete=True)
