@@ -119,7 +119,7 @@ if __name__ == '__main__':
     # db_path = Path('/app') / os.getenv('DB_NAME')
     # exporter = ExportToSQLite(db_path)
 
-    exporter = ExportToRedis("ESP32_data")
+    exporter = ExportToRedis("ESP32_data", max_queue_size=20)
 
     extractor = Extractor(image_dir, exporter)
     

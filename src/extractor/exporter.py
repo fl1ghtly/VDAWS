@@ -12,16 +12,39 @@ class Exporter(Protocol):
         ...
         
 class ExportToRedis():
-    def __init__(self, stream: str):
+    def __init__(self, stream: str, max_queue_size: int):
         self.data_stream = stream
+        self.max_queue_size = max_queue_size
         self.redis = None
 
     def export(self, batch: list[dict]) -> None:
         self.redis.lpush(self.data_stream, json.dumps(batch))
+        
+        # Check if we exceeded the max queue size
+        while self.redis.llen(self.data_stream) > self.max_queue_size:
+            # Pop the oldest batch from the right of the list
+            dropped_data = self.redis.rpop(self.data_stream)
+            
+            if dropped_data:
+                # Parse the dropped JSON string back into a Python list
+                dropped_batch = json.loads(dropped_data)
+                
+                # Iterate through the batch and delete associated images
+                for item in dropped_batch:
+                    image_path = item.get('image_path')
+                    if image_path and os.path.exists(image_path):
+                        try:
+                            os.remove(image_path)
+                            print(f"Dropped from queue: Deleted {image_path}")
+                        except OSError as e:
+                            print(f"ERROR deleting {image_path}: {e}")
     
     def setup(self) -> None:
         # Create redis queue hosted on the Redis container and decode responses to a readable format
         self.redis = redis.Redis(host='redis', port=6379, decode_responses=True)
+        
+        self.redis.delete(self.data_stream)
+        print(f"Startup: Cleared existing Redis queue '{self.data_stream}'")
 
 class ExportToSQLite():
     def __init__(self, database_path: Path):
