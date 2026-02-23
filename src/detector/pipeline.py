@@ -41,25 +41,39 @@ class DataPipeline:
         self.is_running = False
         
     def run(self) -> List[ObjectData]:
+        print('Batching')
         # Call Batcher
         batch = self.batcher.batch()
         
+        print('Processing Camera Data')
         # Call Camera Processor
         batch = [dt.process_camera(rawData) for rawData in batch]
 
+        print('Raytracing')
         avg_timestamp: float = 0.0
         for cameraData in batch:
+            print(f'Processing camera {cameraData.cam_id}: {cameraData.image_path}')
             motion_mask = cv2.imread(cameraData.image_path, cv2.IMREAD_GRAYSCALE)
             rays = dt.get_camera_rays(cameraData, motion_mask)
             raycast_intersections, data = self.voxel_tracer.raycast_into_voxels_batch(rays)
             self.voxel_tracer.add_grid_data(raycast_intersections, data)
             avg_timestamp += cameraData.timestamp
             os.remove(cameraData.image_path)
+
+            if self.graph and len(rays.origins) > 0:
+                # The middle ray represents the camera's forward view
+                mid_idx = len(rays.origins) // 2
+                self.graph.add_camera_model(cameraData.cam_id, 
+                                            cameraData.position, 
+                                            rays.norm_dirs[mid_idx])
         avg_timestamp /= len(batch)
         
+        print(f'Maximum voxel: {np.max(self.voxel_tracer.voxel_grid)}')
+        print('Visualizing')
         # Optional Visualization
         if (self.graph):
-            self.graph.add_voxels(self.voxel_tracer.voxel_grid, self.voxel_tracer.grid_min, VOXEL_SIZE)
+            self.graph.add_bounding_box(self.voxel_tracer.grid_min, self.voxel_tracer.grid_max)
+            self.graph.add_voxels(self.voxel_tracer.voxel_grid, self.voxel_tracer.grid_min, self.voxel_tracer.voxel_sizes)
             self.graph.update()
 
         extracted_voxels = dt.extract_percentile_index(self.voxel_tracer.voxel_grid, 99.9)
@@ -191,7 +205,7 @@ async def get_cameras(request: Request):
 batcher = dt.RedisBatcher("ESP32_data")
 voxel_tracer = dt.VoxelTracer(
     np.array([0, 0]),
-    np.array([300, 350]),
+    np.array([300, 300]),
     500,
     np.array([200, 200, 200]))
 cluster_tracker = dt.ClusterTracker(
