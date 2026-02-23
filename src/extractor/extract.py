@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import shutil
 import requests
+import time
 import cv2
 import numpy as np
 from cv2.typing import MatLike
@@ -68,8 +69,12 @@ class Extractor:
     def extract_all(self) -> list[dict]:
         batch = []
         for url, (id, basepath) in self.urls.items():
-            image = self.request_capture(url, timeout=self.timeout)
-            sensor_data = self.request_sensors(url, timeout=self.timeout)
+            try:
+                image = self.request_capture(url, timeout=self.timeout)
+                sensor_data = self.request_sensors(url, timeout=self.timeout)
+            except TimeoutError as e:
+                print(e)
+                continue
             
             # Check if requests were successful
             if (image is None):
@@ -123,10 +128,18 @@ if __name__ == '__main__':
 
     extractor = Extractor(image_dir, exporter)
     
-    # URL to ESP32 is the Husarnet Device name
-    extractor.add_url('http://esp32-cam1')
+    extractor.add_url('http://10.10.10.170')
     
+    RATE_LIMIT_SEC = 1.0
+
     while True:
+        start_time = time.time()
+        
         batch = extractor.extract_all()
         if len(batch) <= 0: continue
         extractor.push_batch(batch)
+
+        elapsed_time = time.time() - start_time
+        sleep_time = RATE_LIMIT_SEC - elapsed_time
+        if (sleep_time > 0):
+            time.sleep(sleep_time)
