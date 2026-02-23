@@ -4,12 +4,6 @@ from detector.ray import Ray, Rays
 
 MAX_RAY_STEPS = 512
 class VoxelTracer:
-    voxel_grid: np.ndarray
-    voxel_sizes: float
-    grid_min: np.ndarray
-    grid_max: np.ndarray
-    grid_size: np.ndarray
-
     def __init__(self, bottom_left: np.ndarray, top_right: np.ndarray, height: float, resolution: np.ndarray):
         """
         Args:
