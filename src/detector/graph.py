@@ -82,6 +82,32 @@ class Graph:
                               line_width=2,
                               reset_camera=False)      
     
+    def add_camera_model(self, id: int, position: np.ndarray, direction: np.ndarray, color: str='red', scale:float=1) -> None:
+        """Visualizes the camera position and viewing direction"""
+        # Draw the camera as a sphere
+        sphere = pv.Sphere(radius=scale, center=position)
+        self.plotter.add_mesh(sphere, color=color, name=f"cam_sphere_{id}")
+        
+        # Draw the facing direction as an arrow
+        arrow = pv.Arrow(start=position, direction=direction, scale=scale * 5)
+        self.plotter.add_mesh(arrow, color=color, name=f"cam_arrow_{id}")
+
+    def add_bounding_box(self, grid_min: np.ndarray, grid_max: np.ndarray, color: str = 'blue') -> None:
+        """Visualizes the 3D boundaries of the voxel grid target area"""
+        # PyVista bounds format: (xMin, xMax, yMin, yMax, zMin, zMax)
+        bounds = (
+            grid_min[0], grid_max[0],
+            grid_min[1], grid_max[1],
+            grid_min[2], grid_max[2]
+        )
+        box = pv.Box(bounds=bounds)
+        
+        # Draw it as a wireframe so we can see inside it
+        self.plotter.add_mesh(box, style='wireframe', color=color, line_width=2, name="grid_bounds")
+        
+        # Turn on the XYZ axes in the corner of the screen
+        self.plotter.show_axes()
+    
     def _create_point_cloud(self, voxels: np.ndarray, origin: np.ndarray, voxel_size: np.ndarray):
         # Points are the (x, y, z) of the center of each voxel
         voxel_center = np.full(3, voxel_size / 2)
