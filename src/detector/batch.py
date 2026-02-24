@@ -47,9 +47,9 @@ class RedisBatcher():
                     data['orientation']['yaw']
                 ),
                 (
+                    data['position']['longitude'],
                     data['position']['latitude'], 
-                    data['position']['altitude'], 
-                    data['position']['longitude']
+                    data['position']['altitude']
                 ),
                 data['image_path'],
                 data['fov']
@@ -76,9 +76,9 @@ class RedisBatcher():
                     data['orientation']['yaw']
                 ),
                 (
+                    data['position']['longitude'],
                     data['position']['latitude'], 
-                    data['position']['altitude'], 
-                    data['position']['longitude']
+                    data['position']['altitude']
                 ),
                 data['image_path'],
                 data['fov']
@@ -117,7 +117,7 @@ class SQLiteBatcher:
                         row['CameraID'],
                         row['Timestamp'],
                         np.array([row['RotationX'], row['RotationY'], row['RotationZ']]),
-                        np.array([row['Latitude'], row['Altitude'], row['Longitude']]),
+                        np.array([row['Longitude'], row['Latitude'], row['Altitude']]),
                         row['ImagePath'],
                         row['FOV']
                     ))
@@ -167,7 +167,7 @@ class SQLiteBatcher:
                         row['CameraID'],
                         row['Timestamp'],
                         np.array([row['RotationX'], row['RotationY'], row['RotationZ']]),
-                        np.array([row['Latitude'], row['Altitude'], row['Longitude']]),
+                        np.array([row['Longitude'], row['Latitude'], row['Altitude']]),
                         row['ImagePath'],
                         row['FOV']
                     ))

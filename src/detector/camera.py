@@ -28,7 +28,7 @@ def process_camera(rawData: RawSensorData):
         rawData.cam_id, 
         rawData.timestamp, 
         np.vectorize(math.radians)(rawData.rotation),
-        rawData.position,
+        np.array(rawData.position),
         rawData.image_path,
         rawData.fov,
         pixel_delta_u,
