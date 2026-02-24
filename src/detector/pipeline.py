@@ -6,6 +6,7 @@ import threading
 import json
 import asyncio
 import cv2
+import traceback
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
@@ -117,7 +118,7 @@ class DataPipeline:
                     data = [obj.__dict__ for obj in objects]
                     data_queue.put(data)
             except Exception as e:
-                print(f'Pipeline error: {e}')
+                print(f'Pipeline error: {traceback.print_exc()}')
 
 class DetectorParameters(BaseModel):
     grid_min: list[float]
