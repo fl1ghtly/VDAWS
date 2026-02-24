@@ -4,22 +4,15 @@ from detector.ray import Ray, Rays
 
 MAX_RAY_STEPS = 512
 class VoxelTracer:
-    def __init__(self, bottom_left: np.ndarray, top_right: np.ndarray, height: float, resolution: np.ndarray):
+    def __init__(self):
+        """Creates the Voxel Tracer object. Must run set_grid_size() before starting
+        any detection.
         """
-        Args:
-            bottom_left (np.ndarray): [latitude_min, longitude_min]
-            top_right (np.ndarray): [latitude_max, longitude_max]
-            height (float): Total altitude from 0 to height
-            resolution (np.ndarray): [latitude_steps, longitude_steps, altitude_steps] (number of cells per axis)
-        """
-        self.grid_min = np.array([bottom_left[0], bottom_left[1], 0.0], dtype=np.float64)
-        self.grid_max = np.array([top_right[0], top_right[1], height], dtype=np.float64)
-        self.grid_size = resolution.astype(np.int64)
-
-        # Calculate size of voxel in degrees/meter for each axis
-        self.voxel_sizes = (self.grid_max - self.grid_min) / self.grid_size
-
-        self.voxel_grid = np.zeros(self.grid_size, dtype=np.uint64)
+        self.grid_min = None
+        self.grid_max = None
+        self.grid_size = None
+        self.voxel_sizes = None
+        self.voxel_grid = None
     
     def add_grid_data(self, voxels: np.ndarray, data: np.ndarray):
         """Adds data (N, ) to every Voxel (N, 3) in the Voxel Grid"""
@@ -46,10 +39,6 @@ class VoxelTracer:
                                    self.grid_size, 
                                    self.voxel_sizes)
 
-    def voxel_to_geo(self, ind: np.ndarray) -> np.ndarray:
-        """Returns the coordinates of the grid indices in [lat, lon, alt] coordinates"""
-        return self.grid_min + (ind + 0.5) * self.voxel_sizes
-
     def set_grid_size(self, bottom_left: np.ndarray, top_right: np.ndarray, height: float, resolution: np.ndarray) -> None:
         """Changes the physical area the grid represents. Will increase the size of each voxel
         if grid resolution is kept the same. Resets the grid"""
@@ -60,7 +49,7 @@ class VoxelTracer:
         
         self.voxel_sizes = (self.grid_max - self.grid_min) / self.grid_size
 
-        self.clear_grid_data()
+        self.voxel_grid = np.zeros(self.grid_size, dtype=np.uint64)
         
     def set_grid_size_keep_resolution(self, bottom_left: np.ndarray, top_right: np.ndarray, height: float) -> None:
         """Changes the physical area the grid represents while keeping approximately 
