@@ -40,6 +40,7 @@ class DataPipeline:
         if graph:
             self.graph.show()
         self.is_running = False
+        self.origin_lonlat: np.ndarray | None = None
         
     def run(self) -> List[ObjectData]:
         print('Batching')
@@ -54,6 +55,7 @@ class DataPipeline:
         avg_timestamp: float = 0.0
         for cameraData in batch:
             print(f'Processing camera {cameraData.cam_id}: {cameraData.image_path}')
+            cameraData.position = lonlat_to_local_meters(cameraData.position, self.origin_lonlat)
             motion_mask = cv2.imread(cameraData.image_path, cv2.IMREAD_GRAYSCALE)
             rays = dt.get_camera_rays(cameraData, motion_mask)
             raycast_intersections, data = self.voxel_tracer.raycast_into_voxels_batch(rays)
@@ -94,8 +96,9 @@ class DataPipeline:
         
         objects: List[ObjectData] = []
         for id in ids:
+            latlon_pos = local_meters_to_lonlat(positions[id], self.origin_lonlat)
             objects.append(ObjectData(
-                id, avg_timestamp, positions[id], velocities[id]
+                id, avg_timestamp, latlon_pos, velocities[id]
             ))
         self.cluster_tracker.cleanup_old_clusters()
 
@@ -119,6 +122,41 @@ class DataPipeline:
                     data_queue.put(data)
             except Exception as e:
                 print(f'Pipeline error: {traceback.print_exc()}')
+
+def lonlat_to_local_meters(target_lonlat: np.ndarray, origin_lonlat: np.ndarray) -> np.ndarray:
+    """
+    Converts a [Lon, Lat] array to local [X, Y] meters relative to an origin.
+    Returns: np.ndarray [x_meters_east, y_meters_north]
+    """
+    lon_diff = target_lonlat[0] - origin_lonlat[0]
+    lat_diff = target_lonlat[1] - origin_lonlat[1]
+    
+    meters_per_degree_lat = 111320.0
+    
+    # X is Longitude (scaled by cosine of the origin's latitude)
+    x_meters = lon_diff * meters_per_degree_lat * np.cos(np.radians(origin_lonlat[1]))
+    # Y is Latitude
+    y_meters = lat_diff * meters_per_degree_lat
+    
+    result = target_lonlat.copy()
+    result[:2] = [x_meters, y_meters]
+    return result
+
+def local_meters_to_lonlat(local_meters: np.ndarray, origin_lonlat: np.ndarray) -> np.ndarray:
+    """
+    Converts local [X, Y] meters back to [Lon, Lat] relative to an origin.
+    Returns: np.ndarray [target_lon, target_lat]
+    """
+    meters_per_degree_lat = 111320.0
+    x_meters, y_meters = local_meters[0], local_meters[1]
+    lon_0, lat_0 = origin_lonlat[0], origin_lonlat[1]
+    
+    target_lon = lon_0 + (x_meters / (meters_per_degree_lat * np.cos(np.radians(lat_0))))
+    target_lat = lat_0 + (y_meters / meters_per_degree_lat)
+
+    result = local_meters.copy()
+    result[:2] = [target_lon, target_lat]
+    return result
 
 class DetectorParameters(BaseModel):
     grid_min: list[float]
@@ -168,9 +206,16 @@ async def get_stream(request: Request):
 
 @api_app.post('/update_parameters')
 async def update_parameters(settings: DetectorParameters):
+    pipeline.origin_lonlat = settings.grid_min
+    
+    # Convert to local meters to avoid floating point errors when working
+    # with raw longitude/latitude coordinates
     pipeline.voxel_tracer.set_grid_size(
-        np.array(settings.grid_min), 
-        np.array(settings.grid_max), 
+        np.array([0, 0]),   # Grid Min is always [0, 0] in local meters 
+        lonlat_to_local_meters(
+            np.array(settings.grid_max), 
+            np.array(settings.grid_min)
+        ), 
         settings.height, 
         np.array(settings.resolution)
         )
@@ -204,11 +249,7 @@ async def get_cameras(request: Request):
 # exporter = dt.ExportToSQLite(db_path)
 
 batcher = dt.RedisBatcher("ESP32_data")
-voxel_tracer = dt.VoxelTracer(
-    np.array([0, 0]),
-    np.array([300, 300]),
-    500,
-    np.array([200, 200, 200]))
+voxel_tracer = dt.VoxelTracer()
 cluster_tracker = dt.ClusterTracker(
     float(os.getenv('MAX_CLUSTER_DISTANCE')), 
     int(os.getenv('MAX_CLUSTER_AGE'))
@@ -216,5 +257,16 @@ cluster_tracker = dt.ClusterTracker(
 exporter = dt.ExportToCLI()
 graph = dt.Graph()
 pipeline = DataPipeline(batcher, voxel_tracer, cluster_tracker, exporter, graph)
+
+# TODO temporary setup for debugging
+grid_min = np.array([0, 0]) # [Lon (X), Lat (Y)]
+grid_max = np.array([3, 3])
+voxel_tracer.set_grid_size(
+    np.array([0, 0]),
+    lonlat_to_local_meters(grid_max, grid_min),
+    500,
+    np.array([10, 10, 10])
+)
+pipeline.origin_lonlat = grid_min
     
 lifespan(api_app)
