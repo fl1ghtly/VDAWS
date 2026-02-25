@@ -3,6 +3,7 @@ from pathlib import Path
 import shutil
 import requests
 import time
+import json
 import cv2
 import numpy as np
 from cv2.typing import MatLike
@@ -19,12 +20,12 @@ def get_latest_file(path: Path) -> Path | None:
     return max(paths, key=os.path.getctime)
 
 class Extractor:
-    def __init__(self, image_directory: Path, exporter: Exporter):
+    def __init__(self, image_directory: Path, exporter: Exporter, timeout: float):
         self.image_dir = image_directory
         self.urls: dict[str, tuple[str, Path]] = {}
         self.url_count = 0
         self.exporter = exporter
-        self.timeout = float(os.getenv('REQUEST_TIMEOUT_SEC'))
+        self.timeout = timeout
         
         self.setup()
         
@@ -116,22 +117,27 @@ class Extractor:
     
     def push_batch(self, batch: list[dict]) -> None:
         self.exporter.export(batch)
-            
+
+    
 if __name__ == '__main__':
-    extractor_folder = Path('/app') / 'extractor'
+    app_folder = Path('/app')
+    extractor_folder = app_folder / 'extractor'
     image_dir = extractor_folder / 'images'
 
-    # db_path = Path('/app') / os.getenv('DB_NAME')
+    with open(app_folder / 'config.json', 'r') as f:
+        config: dict = json.load(f)
+
+    # db_path = app_folder / config['db_name']
     # exporter = ExportToSQLite(db_path)
 
-    exporter = ExportToRedis("ESP32_data", max_queue_size=20)
+    exporter = ExportToRedis(config['batcher']['stream_name'], max_queue_size=20)
 
-    extractor = Extractor(image_dir, exporter)
+    extractor = Extractor(image_dir, exporter, config['extractor']['request_timeout_sec'])
     
-    extractor.add_url('http://10.10.10.170')
-    
-    RATE_LIMIT_SEC = 1.0
+    for url in config['extractor']['ip_addresses']:
+        extractor.add_url(url)
 
+    ratelimit = config['extractor']['ratelimit_sec']
     while True:
         start_time = time.time()
         
@@ -140,6 +146,6 @@ if __name__ == '__main__':
         extractor.push_batch(batch)
 
         elapsed_time = time.time() - start_time
-        sleep_time = RATE_LIMIT_SEC - elapsed_time
+        sleep_time = ratelimit - elapsed_time
         if (sleep_time > 0):
             time.sleep(sleep_time)

@@ -1,0 +1,24 @@
+{
+    "db_name": "app.db",
+    "extractor": {
+        "ip_addresses": [
+            "http://10.10.10.170"
+        ],
+        "request_timeout_sec": 1.0,
+        "ratelimit_sec": 1.0
+    },
+    "voxel_tracer": {
+        "grid_min": [-117.78442431707255, 33.70085766209189],
+        "grid_max": [-117.78395148903726, 33.701086186258046],
+        "height": 200,
+        "resolution": [10, 10, 10]
+    },
+    "cluster_tracker": {
+        "max_cluster_distance": 10.0,
+        "max_cluster_age": 5,
+        "eps": 20.0
+    },
+    "batcher": {
+        "stream_name": "ESP32_data"
+    }
+}

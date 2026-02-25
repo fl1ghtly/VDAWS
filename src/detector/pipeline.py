@@ -17,11 +17,6 @@ from queue import Queue
 from models import CameraData, ObjectData
 import detector as dt
 
-GRID_SIZE = 200
-VOXEL_SIZE = 10.0
-EPS_ADJACENT = VOXEL_SIZE
-EPS_CORNER = math.sqrt(3) * VOXEL_SIZE
-
 # Json Encoder for numpy arrays
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -88,7 +83,7 @@ class DataPipeline:
         
         motion_voxels = np.transpose(extracted_voxels)
 
-        centroids = dt.get_cluster_centers(motion_voxels, EPS_CORNER)
+        centroids = dt.get_cluster_centers(motion_voxels, config['cluster_tracker']['eps'])
         
         ids = self.cluster_tracker.track_clusters(centroids, avg_timestamp)
         positions = self.cluster_tracker.get_cluster_position(ids)
@@ -244,28 +239,31 @@ async def get_cameras(request: Request):
         
     return {"cameras": cameras_info}
 
-# db_path = Path('/app') / os.getenv('DB_NAME')
+with open(Path('/app') / 'config.json', 'r') as f:
+    config: dict = json.load(f)
+
+# db_path = Path('/app') / config['db_name']
 # batcher = dt.SQLiteBatcher(db_path, 0.5, soft_delete=True)
 # exporter = dt.ExportToSQLite(db_path)
 
-batcher = dt.RedisBatcher("ESP32_data")
+batcher = dt.RedisBatcher(config['batcher']['stream_name'])
 voxel_tracer = dt.VoxelTracer()
 cluster_tracker = dt.ClusterTracker(
-    float(os.getenv('MAX_CLUSTER_DISTANCE')), 
-    int(os.getenv('MAX_CLUSTER_AGE'))
+    float(config['cluster_tracker']['max_cluster_distance']), 
+    int(config['cluster_tracker']['max_cluster_age'])
 )
 exporter = dt.ExportToCLI()
 graph = dt.Graph()
 pipeline = DataPipeline(batcher, voxel_tracer, cluster_tracker, exporter, graph)
 
 # TODO temporary setup for debugging
-grid_min = np.array([0, 0]) # [Lon (X), Lat (Y)]
-grid_max = np.array([3, 3])
+grid_min = np.array(config['voxel_tracer']['grid_min']) # [Lon (X), Lat (Y)]
+grid_max = np.array(config['voxel_tracer']['grid_max'])
 voxel_tracer.set_grid_size(
-    np.array([0, 0]),
+    np.array([0, 0]),   # Grid Min is always [0, 0] when transforming into local meters
     lonlat_to_local_meters(grid_max, grid_min),
-    500,
-    np.array([10, 10, 10])
+    config['voxel_tracer']['height'],
+    np.array(config['voxel_tracer']['resolution'])
 )
 pipeline.origin_lonlat = grid_min
     

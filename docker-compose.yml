@@ -1,20 +1,22 @@
 services:
   extractor:
     build: ./src/extractor
-    env_file:
-      - .env.dev
+    environment:
+      - PYTHONUNBUFFERED=1  # Print logs with buffering them
     volumes:
       - ./shared:/app
+      - ./config.json:/app/config.json
     depends_on:
       - redis
     restart: on-failure
   detector:
     build: ./src/detector
-    env_file:
-      - .env.dev
+    environment:
+      - PYTHONUNBUFFERED=1
     volumes:
       - ./shared:/app
       - ./src/models:/src/models:ro
+      - ./config.json:/app/config.json
     depends_on:
       - redis
       - extractor
