@@ -1,7 +1,11 @@
+import os
 import threading
 import asyncio
 import pyvista as pv
 import numpy as np
+import contextily as ctx
+import cv2
+from pathlib import Path
 from detector.ray import Ray
 from pyvista.trame.ui import plotter_ui
 from trame.app import get_server
@@ -107,6 +111,82 @@ class Graph:
         
         # Turn on the XYZ axes in the corner of the screen
         self.plotter.show_axes()
+        
+    def add_satellite_image(self, grid_min: np.ndarray, lonlat_min: np.ndarray, lonlat_max: np.ndarray, decimals: int = 3) -> None:
+        """Dynamically fetches map tiles and overlays them under detection boundary region."""
+        
+        w, s = lonlat_min[0], lonlat_min[1]
+        e, n = lonlat_max[0], lonlat_max[1]
+
+        # 1. Truncate coordinates to create a larger map tile
+        factor = 10 ** decimals
+        w_t = np.floor(w * factor) / factor  # Push West outward
+        s_t = np.floor(s * factor) / factor  # Push South outward
+        e_t = np.ceil(e * factor) / factor   # Push East outward
+        n_t = np.ceil(n * factor) / factor   # Push North outward
+        
+        # Map file name acts as a cache to avoid repeated API calls
+        map_file = Path('/app') / f"map_{w_t}_{s_t}_{e_t}_{n_t}.png"
+
+        ext_filename = f"map_{w_t}_{s_t}_{e_t}_{n_t}.json"
+        ext_file = Path('/app') / ext_filename
+        
+        # 2. Fetch using the truncated coordinates
+        if not map_file.exists():
+            print(f"Fetching dynamic map tiles for {map_file}...")
+            try:
+                img_wm, ext_wm = ctx.bounds2img(w_t, s_t, e_t, n_t, ll=True, source=ctx.providers.OpenStreetMap.Mapnik)
+
+                # Reproject into WGS84
+                img_wgs, ext_wgs = ctx.warp_tiles(img_wm, ext_wm, t_crs='EPSG:4326')
+
+                # Contextily returns an RGB array, while OpenCV saves as BGR
+                img_bgr = cv2.cvtColor(img_wgs, cv2.COLOR_RGB2BGR)
+                
+                cv2.imwrite(map_file, img_bgr)
+                import json
+                with open(ext_file, 'w') as f:
+                    json.dump(ext_wgs, f)
+                print("Map tiles saved successfully.")
+            except Exception as e:
+                print(f"Failed to fetch map tiles: {e}")
+                return
+        else:
+            import json
+            with open(ext_file, 'r') as f:
+                ext_wgs = json.load(f)
+
+        true_w, true_e, true_s, true_n = ext_wgs
+        # 3. Calculate the true physical size and offset of the expanded map
+        # Origin is our true lonlat_min
+        lon_origin, lat_origin = lonlat_min[0], lonlat_min[1]
+        meters_per_degree_lat = 111320.0
+        
+        # Calculate local meters for the new map corners
+        map_min_x = (true_w - lon_origin) * meters_per_degree_lat * np.cos(np.radians(lat_origin))
+        map_max_x = (true_e - lon_origin) * meters_per_degree_lat * np.cos(np.radians(lat_origin))
+        map_min_y = (true_s - lat_origin) * meters_per_degree_lat
+        map_max_y = (true_n - lat_origin) * meters_per_degree_lat
+
+        center_x = (map_min_x + map_max_x) / 2.0
+        center_y = (map_min_y + map_max_y) / 2.0
+        i_size = map_max_x - map_min_x
+        j_size = map_max_y - map_min_y
+
+        # 4. Draw the plane
+        floor = pv.Plane(
+            center=(center_x, center_y, grid_min[2] - 0.1), # Draw slightly below detection region to avoid z-fighting
+            direction=(0, 0, 1),
+            i_size=i_size,
+            j_size=j_size
+        )
+        
+        # 5. Apply the texture
+        try:
+            tex = pv.Texture(str(map_file))
+            self.plotter.add_mesh(floor, texture=tex, name="satellite_tile")
+        except Exception as e:
+            print(f"Could not apply map texture: {e}")
     
     def _create_point_cloud(self, voxels: np.ndarray, origin: np.ndarray, voxel_size: np.ndarray):
         # Points are the (x, y, z) of the center of each voxel
