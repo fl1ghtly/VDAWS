@@ -36,6 +36,8 @@ class DataPipeline:
             self.graph.show()
         self.is_running = False
         self.origin_lonlat: np.ndarray | None = None
+        self.min_cameras = 0
+        self.confidence = 0
         
     def run(self) -> List[ObjectData]:
         print('Batching')
@@ -70,16 +72,18 @@ class DataPipeline:
         print('Visualizing')
         # Optional Visualization
         if (self.graph):
-            self.graph.add_bounding_box(self.voxel_tracer.grid_min, self.voxel_tracer.grid_max)
+            # Add raycasted voxel data
             self.graph.add_voxels(self.voxel_tracer.voxel_grid, self.voxel_tracer.grid_min, self.voxel_tracer.voxel_sizes)
+
+            # Show new changes
             self.graph.update()
 
-        extracted_voxels = dt.extract_percentile_index(self.voxel_tracer.voxel_grid, 99.9)
+        extracted_voxels = dt.extract_significant_voxels(self.voxel_tracer.voxel_grid, self.min_cameras, self.confidence)
         self.voxel_tracer.clear_grid_data()
         # Skip this batch if no significant voxels are found
         if extracted_voxels is None:
             print('Skipping batch: No significant motion found')
-            return
+            return []
         
         motion_voxels = np.transpose(extracted_voxels)
 
@@ -158,6 +162,8 @@ class DetectorParameters(BaseModel):
     grid_max: list[float]
     height: float
     resolution: list[int]
+    min_cameras: int
+    confidence: float
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -201,7 +207,9 @@ async def get_stream(request: Request):
 
 @api_app.post('/update_parameters')
 async def update_parameters(settings: DetectorParameters):
-    pipeline.origin_lonlat = settings.grid_min
+    pipeline.origin_lonlat = np.array(settings.grid_min)
+    pipeline.min_cameras = settings.min_cameras
+    pipeline.confidence = settings.confidence
     
     # Convert to local meters to avoid floating point errors when working
     # with raw longitude/latitude coordinates
@@ -209,11 +217,24 @@ async def update_parameters(settings: DetectorParameters):
         np.array([0, 0]),   # Grid Min is always [0, 0] in local meters 
         lonlat_to_local_meters(
             np.array(settings.grid_max), 
-            np.array(settings.grid_min)
+            pipeline.origin_lonlat
         ), 
         settings.height, 
         np.array(settings.resolution)
         )
+
+    # Update visualization if graph is provided
+    if (pipeline.graph):
+        # Draw detection region boundary
+        pipeline.graph.add_bounding_box(pipeline.voxel_tracer.grid_min, pipeline.voxel_tracer.grid_max)
+
+        # Add satellite image to floor
+        pipeline.graph.add_satellite_image(
+            pipeline.voxel_tracer.grid_min,
+            pipeline.origin_lonlat,
+            local_meters_to_lonlat(pipeline.voxel_tracer.grid_max, pipeline.origin_lonlat)
+        )
+        
     return {"updated": 
         {
             "grid_min": pipeline.voxel_tracer.grid_min.tolist(),
@@ -257,14 +278,14 @@ graph = dt.Graph()
 pipeline = DataPipeline(batcher, voxel_tracer, cluster_tracker, exporter, graph)
 
 # TODO temporary setup for debugging
-grid_min = np.array(config['voxel_tracer']['grid_min']) # [Lon (X), Lat (Y)]
-grid_max = np.array(config['voxel_tracer']['grid_max'])
-voxel_tracer.set_grid_size(
-    np.array([0, 0]),   # Grid Min is always [0, 0] when transforming into local meters
-    lonlat_to_local_meters(grid_max, grid_min),
-    config['voxel_tracer']['height'],
-    np.array(config['voxel_tracer']['resolution'])
+init_settings = DetectorParameters(
+    grid_min=config['voxel_tracer']['grid_min'],
+    grid_max=config['voxel_tracer']['grid_max'],
+    height=config['voxel_tracer']['height'],
+    resolution=config['voxel_tracer']['resolution'],
+    min_cameras=config['voxel_tracer']['min_cameras'],
+    confidence=config['voxel_tracer']['confidence']
 )
-pipeline.origin_lonlat = grid_min
+asyncio.run(update_parameters(init_settings))
     
 lifespan(api_app)

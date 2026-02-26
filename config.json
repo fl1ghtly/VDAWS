@@ -2,16 +2,18 @@
     "db_name": "app.db",
     "extractor": {
         "ip_addresses": [
-            "http://10.10.10.170"
+            "http://IP"
         ],
         "request_timeout_sec": 1.0,
         "ratelimit_sec": 1.0
     },
     "voxel_tracer": {
-        "grid_min": [-117.78442431707255, 33.70085766209189],
-        "grid_max": [-117.78395148903726, 33.701086186258046],
+        "grid_min": [lon_min, lat_min],
+        "grid_max": [lon_max, lat_max],
         "height": 200,
-        "resolution": [10, 10, 10]
+        "resolution": [10, 10, 10],
+        "confidence": 0.9,
+        "min_cameras": 1
     },
     "cluster_tracker": {
         "max_cluster_distance": 10.0,
