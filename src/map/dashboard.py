@@ -9,7 +9,7 @@ import sys
 import os
 import numpy as np
 import time
-from flask import Flask, request, jsonify
+from flask import request, jsonify
 
 # --- SETUP PATHS ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -28,8 +28,6 @@ TOTAL_FRAMES = 100
 PATH_MOVEMENT_SCALE = 1.5 
 WIFI_INTERFACE = 'Wi-Fi' 
 
-# --- GLOBAL STATE FOR GRID ---
-# Stores the latest grid parameters received from the detector
 GRID_STATE = {
     "min": None,
     "max": None,
@@ -42,6 +40,7 @@ collision_detector = CollisionDetector(warning_radius_meters=150.0)
 
 # --- START SNIFFER ---
 try:
+    # Sniffer runs in the background and pushes straight to manager
     run_sniffer_thread(manager, interface=WIFI_INTERFACE)
     print(f"[SUCCESS] Sniffer thread started on {WIFI_INTERFACE}")
 except Exception as e:
@@ -72,10 +71,9 @@ simulated_drones = [
 
 # --- DASHBOARD APP ---
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
-server = app.server # Expose the server for the API route
+server = app.server 
 
-# --- API ENDPOINT ---
-# Receives the grid parameters from the detector/sniffer
+# --- API ENDPOINTS ---
 @server.route('/update_parameters', methods=['POST'])
 def update_parameters():
     try:
@@ -83,51 +81,53 @@ def update_parameters():
         if not data:
             return jsonify({"status": "error", "message": "No JSON data provided"}), 400
             
-        # Update the global state
         GRID_STATE["min"] = data.get("grid_min")
         GRID_STATE["max"] = data.get("grid_max")
         GRID_STATE["active"] = True
         
-        print(f"[API] Grid Updated: Min={GRID_STATE['min']}, Max={GRID_STATE['max']}")
         return jsonify({"status": "success", "message": "Grid parameters updated"}), 200
     except Exception as e:
-        print(f"[API Error] {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@server.route('/stream_objects', methods=['POST'])
+def stream_objects():
+    """Receives live object data pushed from importer.py"""
+    try:
+        data = request.get_json()
+        if not data or 'objects' not in data:
+            return jsonify({"status": "error", "message": "Missing 'objects' key in JSON payload"}), 400
+            
+        for obj in data['objects']:
+            manager.update_object(
+                id=obj.get('id'),
+                lat=obj.get('lat', 0.0),
+                lon=obj.get('lon', 0.0),
+                alt=obj.get('alt', 0.0),
+                vx=obj.get('vx', 0.0),
+                vy=obj.get('vy', 0.0),
+                vz=obj.get('vz', 0.0)
+            )
+        return jsonify({"status": "success"}), 200
+    except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 # --- LAYOUT ---
 app.layout = dbc.Container([
-    # --- STORE FOR FILTER STATE ---
     dcc.Store(id='filter-store', data=0),
-
-    # Header
+    dbc.Row([dbc.Col(html.H2("VDAWS Live Tracker", className="text-center text-primary mb-4"), width=12)], className="mt-3"),
     dbc.Row([
-        dbc.Col(html.H2("VDAWS Live Tracker", className="text-center text-primary mb-4"), width=12)
-    ], className="mt-3"),
-
-    # Main Content Area
-    dbc.Row([
-        # LEFT COLUMN: THE MAP
         dbc.Col([
             dbc.Card([
-                dbc.CardHeader([
-                    "Live Airspace ", 
-                    html.Span(id='live-badge', className="badge bg-secondary") 
-                ]),
-                dbc.CardBody([
-                    dcc.Graph(id='map-graph', style={'height': '70vh'}),
-                ], style={'padding': '0'}) 
+                dbc.CardHeader(["Live Airspace ", html.Span(id='live-badge', className="badge bg-secondary")]),
+                dbc.CardBody([dcc.Graph(id='map-graph', style={'height': '70vh'})], style={'padding': '0'}) 
             ])
         ], width=8),
-
-        # RIGHT COLUMN: CONTROLS & DATA
         dbc.Col([
-            # Component 1: Status & Filters
             dbc.Card([
                 dbc.CardHeader("Filter & Status"),
                 dbc.CardBody([
                     html.Div(id='status-indicator', className="mb-2"),
                     html.Div(id='collision-alert', className="mb-3"),
-                    
                     html.Label("Min Avg Velocity (m/s):"),
                     dbc.InputGroup([
                         dbc.Input(id='velocity-input', type='number', value=0, min=0, step=0.5),
@@ -135,8 +135,6 @@ app.layout = dbc.Container([
                     ], className="mb-3"),
                 ])
             ], className="mb-3"),
-
-            # Component 2: Live Object Table
             dbc.Card([
                 dbc.CardHeader("Tracked Objects"),
                 dbc.CardBody([
@@ -149,21 +147,16 @@ app.layout = dbc.Container([
                         ],
                         style_cell={'textAlign': 'left', 'backgroundColor': '#303030', 'color': 'white'},
                         style_header={'backgroundColor': '#1a1a1a', 'fontWeight': 'bold'},
-                        style_data_conditional=[
-                            {'if': {'row_index': 'odd'}, 'backgroundColor': '#383838'}
-                        ]
+                        style_data_conditional=[{'if': {'row_index': 'odd'}, 'backgroundColor': '#383838'}]
                     )
                 ])
             ], style={'height': '40vh', 'overflowY': 'scroll'})
-
         ], width=4) 
     ]),
-
     dcc.Interval(id='interval-component', interval=500, n_intervals=0),
-
 ], fluid=True)
 
-# --- CALLBACK 1: HANDLE FILTER BUTTON ---
+# --- CALLBACKS ---
 @app.callback(
     Output('filter-store', 'data'),
     Input('velocity-btn', 'n_clicks'),
@@ -174,7 +167,6 @@ def update_filter_store(n_clicks, value):
         return 0
     return float(value)
 
-# --- CALLBACK 2: MAIN DASHBOARD LOOP ---
 @app.callback(
     [Output('map-graph', 'figure'),
      Output('object-table', 'data'),
@@ -186,149 +178,85 @@ def update_filter_store(n_clicks, value):
      Input('filter-store', 'data')] 
 )
 def update_dashboard(n, min_velocity):
-    # 1. CHECK FOR REAL DATA FIRST
     active_objects = manager.get_active_objects()
-    
     is_live = False
-    status_text = "● SIMULATION MODE"
-    status_color = "#ffaa00" 
-    badge_text = "SIM"
-    badge_class = "badge bg-warning text-dark ms-2"
+    status_text, status_color = "● SIMULATION MODE", "#ffaa00" 
+    badge_text, badge_class = "SIM", "badge bg-warning text-dark ms-2"
 
     if active_objects:
         is_live = True
-        status_text = f"● LIVE TRACKING ({len(active_objects)} detected)"
-        status_color = "#00ff00"
-        badge_text = "LIVE"
-        badge_class = "badge bg-danger ms-2"
+        status_text, status_color = f"● LIVE TRACKING ({len(active_objects)} detected)", "#00ff00"
+        badge_text, badge_class = "LIVE", "badge bg-danger ms-2"
     else:
-        # Fallback to Simulation
-        frame_idx = int(n) % TOTAL_FRAMES
-        next_frame_idx = (int(n) + 1) % TOTAL_FRAMES
-        
+        frame_idx, next_frame_idx = int(n) % TOTAL_FRAMES, (int(n) + 1) % TOTAL_FRAMES
         for i, drone in enumerate(simulated_drones):
-            target_pos = path_data[i][frame_idx]
-            future_pos = path_data[i][next_frame_idx]
-            
-            dx = (future_pos[0] - target_pos[0]) * 111000
-            dy = (future_pos[1] - target_pos[1]) * 88000
-            dz = (future_pos[2] - target_pos[2])
-            
+            target_pos, future_pos = path_data[i][frame_idx], path_data[i][next_frame_idx]
+            dx, dy, dz = (future_pos[0] - target_pos[0]) * 111000, (future_pos[1] - target_pos[1]) * 88000, (future_pos[2] - target_pos[2])
             drone.set_position(target_pos[0], target_pos[1], target_pos[2])
             drone.set_velocity(dx * 5, dy * 5, dz * 5)
-        
         active_objects = simulated_drones
 
-    # 2. Detect Collisions
     collision_events = collision_detector.detect_collisions(active_objects)
-    
-    # 3. Filter Objects
     visible_objects = [obj for obj in active_objects if obj.average_speed >= min_velocity]
     
-    # --- BUILD MAP ---
-    node_data = []
-    trail_lats, trail_lons = [], []
-    
+    node_data, trail_lats, trail_lons = [], [], []
     for obj in visible_objects:
         node_data.append({
             'lat': obj.x, 'lon': obj.y, 'alt': obj.altitude,
-            'id': f"ID:{obj.id}", 'size': 15,
-            'speed': f"{obj.average_speed:.1f} m/s"
+            'id': f"ID:{obj.id}", 'size': 15, 'speed': f"{obj.average_speed:.1f} m/s"
         })
-        
         t_lats, t_lons = obj.get_trail_coordinates()
         if t_lats:
             trail_lats.extend(t_lats + [None]) 
             trail_lons.extend(t_lons + [None])
     
     df_nodes = pd.DataFrame(node_data)
-    
-    if is_live and not df_nodes.empty:
-        center_lat = df_nodes['lat'].mean()
-        center_lon = df_nodes['lon'].mean()
-        zoom_level = 14
-    else:
-        center_lat = CENTER_LAT
-        center_lon = CENTER_LON
-        zoom_level = 13
+    center_lat = df_nodes['lat'].mean() if is_live and not df_nodes.empty else CENTER_LAT
+    center_lon = df_nodes['lon'].mean() if is_live and not df_nodes.empty else CENTER_LON
+    zoom_level = 14 if is_live and not df_nodes.empty else 13
 
     if df_nodes.empty:
-        fig = px.scatter_mapbox(lat=[CENTER_LAT], lon=[CENTER_LON], zoom=12)
+        fig = px.scatter_map(lat=[CENTER_LAT], lon=[CENTER_LON], zoom=12)
     else:
-        fig = px.scatter_mapbox(
+        fig = px.scatter_map(
             df_nodes, lat="lat", lon="lon", color="alt", size="size",
             size_max=15, zoom=zoom_level, hover_name="id", hover_data=["speed"],
             color_continuous_scale="Viridis", range_color=[0, 800],
             center={"lat": center_lat, "lon": center_lon}
         )
 
-    # --- DRAW GRID RECTANGLE ---
     if GRID_STATE["active"] and GRID_STATE["min"] and GRID_STATE["max"]:
-        # 1. Get Grid Coordinates (Meters from origin)
-        # Using [x, y] where x aligns with Lat (North) and y aligns with Lon (East)
-        # based on previous collision_detector logic.
-        min_x, min_y = GRID_STATE["min"]  # e.g. [250.6, 360.2]
-        max_x, max_y = GRID_STATE["max"]  # e.g. [400.96, 504.5]
-
-        # 2. Define the 5 points of a rectangle (closing the loop)
-        # Sequence: BL -> TL -> TR -> BR -> BL
+        min_x, min_y = GRID_STATE["min"]
+        max_x, max_y = GRID_STATE["max"]
         box_x = [min_x, max_x, max_x, min_x, min_x]
         box_y = [min_y, min_y, max_y, max_y, min_y]
-
-        # 3. Convert Meters -> Lat/Lon (using CENTER_LAT/LON as the 0,0 reference)
-        # Lat change = x_meters / 111000 
-        # Lon change = y_meters / 88000
-        grid_lats = [CENTER_LAT + (x / 111000) for x in box_x]
-        grid_lons = [CENTER_LON + (y / 88000) for y in box_y]
-
-        # 4. Add the Grid Trace to the Map
-        fig.add_trace(go.Scattermapbox(
-            lat=grid_lats,
-            lon=grid_lons,
-            mode='lines',
-            line=dict(width=2, color='#00FF00', dash='dot'), # Green Dotted Box
-            name='Detection Grid',
-            hoverinfo='none'
+        
+        fig.add_trace(go.Scattermap(
+            lat=[CENTER_LAT + (x / 111000) for x in box_x],
+            lon=[CENTER_LON + (y / 88000) for y in box_y],
+            mode='lines', line=dict(width=2, color='#00FF00', dash='dot'), 
+            name='Detection Grid', hoverinfo='none'
         ))
 
-    # TRAILS
     if trail_lats:
-        fig.add_trace(go.Scattermapbox(
+        fig.add_trace(go.Scattermap(
             lat=trail_lats, lon=trail_lons, mode='lines',
-            line=dict(width=2, color='cyan'),
-            hoverinfo='skip', name='Trail (5s)'
+            line=dict(width=2, color='cyan'), hoverinfo='skip', name='Trail (5s)'
         ))
 
-    # COLLISIONS
     if collision_events:
         lats, lons = [], []
         obj_map = {obj.id: obj for obj in active_objects}
         for event in collision_events:
              if event.drone_a_id in obj_map and event.drone_b_id in obj_map:
-                d1 = obj_map[event.drone_a_id]
-                d2 = obj_map[event.drone_b_id]
+                d1, d2 = obj_map[event.drone_a_id], obj_map[event.drone_b_id]
                 lats.extend([d1.x, d2.x, None])
                 lons.extend([d1.y, d2.y, None])
-        
-        fig.add_trace(go.Scattermapbox(
-            lat=lats, lon=lons, mode='lines', 
-            line=dict(width=4, color='red'), name='Collision'
-        ))
+        fig.add_trace(go.Scattermap(lat=lats, lon=lons, mode='lines', line=dict(width=4, color='red'), name='Collision'))
 
-    fig.update_layout(
-        mapbox_style="carto-darkmatter",
-        margin={"r":0, "t":0, "l":0, "b":0},
-        showlegend=False,
-        uirevision='constant_loop' 
-    )
+    fig.update_layout(map_style="carto-darkmatter", margin={"r":0, "t":0, "l":0, "b":0}, showlegend=False, uirevision='constant_loop')
 
-    # TABLE
-    table_data = [
-        {"id": str(obj.id), "alt": f"{obj.altitude:.1f}", "spd": f"{obj.average_speed:.1f}"}
-        for obj in visible_objects
-    ]
-
-    # ALERTS
+    table_data = [{"id": str(obj.id), "alt": f"{obj.altitude:.1f}", "spd": f"{obj.average_speed:.1f}"} for obj in visible_objects]
     status_html = html.Span(status_text, style={'color': status_color, 'fontWeight': 'bold'})
     
     alert_html = ""
