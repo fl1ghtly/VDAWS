@@ -138,7 +138,25 @@ class Graph:
         grid.cell_data['Values'] = voxel_grid.flatten(order="F")
 
         self.plotter.add_mesh(grid, show_edges=True, reset_camera=False)
-        
+
+def extract_significant_voxels(data: np.ndarray, min_cameras: int, confidence: float) -> np.ndarray | None:
+    """Returns x, y, z arrays containing the indices of nonzero data points intersected by atleast min_cameras with a certain confidence"""
+    # Threshold for motion
+    threshold = min_cameras * confidence * 255  # 255 for max value in 8-bit image
+    
+    # If the threshold is less than or equal to 0, abort
+    if threshold <= 0:
+        print(f'Error: invalid threshold {threshold}, min_cameras={min_cameras}, confidence={confidence}')
+        return None
+    
+    indices = np.nonzero(data >= threshold)
+    
+    if len(indices[0]) == 0:
+        return None
+    
+    # Return the indices of voxels that exceed this statistical threshold
+    return np.array(indices)
+
 def extract_percentile_index(data: np.ndarray, percentile: float) -> np.ndarray | None:
     """Returns x, y, z arrays containing the indices of nonzero data points
     above a certain percentile."""
