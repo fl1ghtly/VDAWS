@@ -73,7 +73,12 @@ class Extractor:
             try:
                 image = self.request_capture(url, timeout=self.timeout)
                 sensor_data = self.request_sensors(url, timeout=self.timeout)
-            except TimeoutError as e:
+            except (TimeoutError, requests.exceptions.Timeout) as e:
+                print(f'Camera {url} timed out after {self.timeout} seconds')
+                print(e)
+                continue
+            except requests.exceptions.RequestException as e:
+                print(f'Failed to reach camera {url}')
                 print(e)
                 continue
             
