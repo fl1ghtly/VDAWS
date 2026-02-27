@@ -71,11 +71,11 @@ class Graph:
     def close_gif(self):
         self.plotter.close()
         
-    def add_voxels(self, voxel_grid: np.ndarray, origin: np.ndarray, voxel_size: np.ndarray) -> None:
+    def add_voxels(self, voxel_grid: np.ndarray, origin: np.ndarray, voxel_size: np.ndarray, max_value: int=255) -> None:
         if self.show_grid:
             self._create_grid(voxel_grid, origin, voxel_size)
         else:
-            self._create_point_cloud(voxel_grid, origin, voxel_size)
+            self._create_point_cloud(voxel_grid, origin, voxel_size, max_value)
     
     def add_ray(self, ray: Ray, color: str, reversed=False, scale: float=1.0) -> None:
         if not self.show_ray: return
@@ -188,7 +188,7 @@ class Graph:
         except Exception as e:
             print(f"Could not apply map texture: {e}")
     
-    def _create_point_cloud(self, voxels: np.ndarray, origin: np.ndarray, voxel_size: np.ndarray):
+    def _create_point_cloud(self, voxels: np.ndarray, origin: np.ndarray, voxel_size: np.ndarray, max_value: int):
         # Points are the (x, y, z) of the center of each voxel
         voxel_center = np.full(3, voxel_size / 2)
         if self.show_top_percentile:
@@ -201,13 +201,15 @@ class Graph:
             return
 
         cloud = pv.PolyData(points)
-        cloud['Values'] = voxels[ind]
+        cloud['Motion Intensity'] = voxels[ind]
         
         self.plotter.add_points(cloud, 
+                                scalars='Motion Intensity',
                                 render_points_as_spheres=True,
-                                # opacity='geom',
                                 point_size=self.point_size,
                                 name="point_cloud",
+                                clim=[0, max_value],
+                                opacity='linear',
                                 reset_camera=False)
     
     def _create_grid(self, voxel_grid: np.ndarray, origin: np.ndarray, voxel_size: np.ndarray):

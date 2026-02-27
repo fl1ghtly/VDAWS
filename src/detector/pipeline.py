@@ -72,8 +72,11 @@ class DataPipeline:
         print('Visualizing')
         # Optional Visualization
         if (self.graph):
+            # n_cameras * 255 (255 is the max value for an 8-bit image)
+            # Voxel can be intersected by at most n_cameras, each having a max of 255
+            max_voxel_value = len(batch) * 255
             # Add raycasted voxel data
-            self.graph.add_voxels(self.voxel_tracer.voxel_grid, self.voxel_tracer.grid_min, self.voxel_tracer.voxel_sizes)
+            self.graph.add_voxels(self.voxel_tracer.voxel_grid, self.voxel_tracer.grid_min, self.voxel_tracer.voxel_sizes, max_voxel_value)
 
             # Show new changes
             self.graph.update()
