@@ -11,7 +11,7 @@
         "grid_min": [lon_min, lat_min],
         "grid_max": [lon_max, lat_max],
         "height": 200,
-        "resolution": [10, 10, 10],
+        "resolution": [10.0, 10.0, 10.0],
         "confidence": 0.9,
         "min_cameras": 1
     },

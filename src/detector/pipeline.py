@@ -164,7 +164,7 @@ class DetectorParameters(BaseModel):
     grid_min: list[float]
     grid_max: list[float]
     height: float
-    resolution: list[int]
+    resolution: list[float]
     min_cameras: int
     confidence: float
 
@@ -214,16 +214,22 @@ async def update_parameters(settings: DetectorParameters):
     pipeline.min_cameras = settings.min_cameras
     pipeline.confidence = settings.confidence
     
+    grid_max = lonlat_to_local_meters(
+            np.array(settings.grid_max), 
+            pipeline.origin_lonlat
+        )
+
+    # Convert from resolution in meters per voxel axis to resolution in voxels per grid axis
+    resolution_meters = settings.resolution
+    resolution_voxels = np.ceil(grid_max / resolution_meters).astype(int) 
+    
     # Convert to local meters to avoid floating point errors when working
     # with raw longitude/latitude coordinates
     pipeline.voxel_tracer.set_grid_size(
         np.array([0, 0]),   # Grid Min is always [0, 0] in local meters 
-        lonlat_to_local_meters(
-            np.array(settings.grid_max), 
-            pipeline.origin_lonlat
-        ), 
+        grid_max, 
         settings.height, 
-        np.array(settings.resolution)
+        resolution_voxels
         )
 
     # Update visualization if graph is provided
