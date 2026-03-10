@@ -221,7 +221,9 @@ async def update_parameters(settings: DetectorParameters):
 
     # Convert from resolution in meters per voxel axis to resolution in voxels per grid axis
     resolution_meters = settings.resolution
-    resolution_voxels = np.ceil(grid_max / resolution_meters).astype(int) 
+    grid_bounds = np.array((*grid_max, settings.height))
+    # Round up and take the absolute value to avoid nonsensical negative values.
+    resolution_voxels = np.abs(np.ceil(grid_bounds / resolution_meters)).astype(int) 
     
     # Convert to local meters to avoid floating point errors when working
     # with raw longitude/latitude coordinates
