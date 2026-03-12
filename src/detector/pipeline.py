@@ -8,6 +8,7 @@ import asyncio
 import cv2
 import traceback
 from contextlib import asynccontextmanager
+from extractor.exporter import ExportToDashboard
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -221,10 +222,11 @@ async def update_parameters(settings: DetectorParameters):
 
     # Convert from resolution in meters per voxel axis to resolution in voxels per grid axis
     resolution_meters = settings.resolution
-    grid_bounds = np.array((*grid_max, settings.height))
-    # Round up and take the absolute value to avoid nonsensical negative values.
-    resolution_voxels = np.abs(np.ceil(grid_bounds / resolution_meters)).astype(int) 
-    
+    grid = np.array((grid_max[0], grid_max[1], settings.height))
+    resolution_voxels = np.abs(np.ceil(grid / resolution_meters)).astype(int) 
+    print(grid)
+    print(resolution_voxels)
+    print(resolution_meters)
     # Convert to local meters to avoid floating point errors when working
     # with raw longitude/latitude coordinates
     pipeline.voxel_tracer.set_grid_size(
@@ -284,7 +286,13 @@ cluster_tracker = dt.ClusterTracker(
     float(config['cluster_tracker']['max_cluster_distance']), 
     int(config['cluster_tracker']['max_cluster_age'])
 )
-exporter = dt.ExportToCLI()
+# Create the individual exporters
+DASHBOARD_URL = "http://127.0.0.1:8050/stream_objects"
+dashboard_exporter = dt.ExportToDashboard(DASHBOARD_URL)
+cli_exporter = dt.ExportToCLI()
+
+# Combine them!
+exporter = dt.MultiExporter([cli_exporter, dashboard_exporter])
 graph = dt.Graph()
 pipeline = DataPipeline(batcher, voxel_tracer, cluster_tracker, exporter, graph)
 

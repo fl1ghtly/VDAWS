@@ -54,7 +54,7 @@ if __name__ == '__main__':
     db_path = os.path.join('sim', 'sim.db')
     db_extractor = ExtractFromDB(db_path, soft_delete=True)
    
-    DASHBOARD_URL = 'http://127.0.0.1:80/stream_objects'
+    DASHBOARD_URL = 'http://127.0.0.1:8050/stream_objects'
 
     print(f"[*] Starting Database Importer...")
     print(f"[*] Extracting from: {db_path}")

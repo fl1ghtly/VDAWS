@@ -22,8 +22,21 @@ from collision_detector import CollisionDetector
 from scanning.remoteid_sniffer import run_sniffer_thread
 
 # --- CONFIGURATION ---
-CENTER_LAT = 37.76
-CENTER_LON = -122.43
+# --- LOAD CONFIG ---
+# Adjust this path if dashboard.py is in a different folder than config.json
+config_path = os.path.join(current_dir, '../../config.json') 
+
+try:
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+        # Grab the origin/min grid point from config to center the map
+        grid_min = config.get('voxel_tracer', {}).get('grid_min', [-122.43, 37.76])
+        CENTER_LON = grid_min[0]
+        CENTER_LAT = grid_min[1]
+except Exception as e:
+    print(f"[WARNING] Could not load config.json for map center: {e}")
+    CENTER_LAT = 37.76
+    CENTER_LON = -122.43
 TOTAL_FRAMES = 100
 PATH_MOVEMENT_SCALE = 1.5 
 WIFI_INTERFACE = 'Wi-Fi' 
@@ -269,4 +282,4 @@ def update_dashboard(n, min_velocity):
     return fig, table_data, status_html, alert_html, badge_text, badge_class
 
 if __name__ == '__main__':
-    app.run(debug=True, port=80)
+    app.run(debug=True, port=8050)

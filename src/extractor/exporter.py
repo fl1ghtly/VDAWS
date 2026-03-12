@@ -5,6 +5,35 @@ import sqlite3
 import redis
 import json
 
+import requests
+from typing import List
+from models import ObjectData
+
+class ExportToDashboard:
+    def __init__(self, dashboard_url: str):
+        self.dashboard_url = dashboard_url
+
+    def export(self, data: List[ObjectData]) -> None:
+        if not data:
+            return
+            
+        payload = {"objects": []}
+        for obj in data:
+            payload["objects"].append({
+                "id": obj.id,
+                "lat": obj.position[1], 
+                "lon": obj.position[0], 
+                "alt": obj.position[2] if len(obj.position) > 2 else 0.0,
+                "vx": obj.velocity[0] if len(obj.velocity) > 0 else 0.0,
+                "vy": obj.velocity[1] if len(obj.velocity) > 1 else 0.0,
+                "vz": obj.velocity[2] if len(obj.velocity) > 2 else 0.0
+            })
+            
+        try:
+            requests.post(self.dashboard_url, json=payload, timeout=2)
+        except requests.exceptions.RequestException as e:
+            print(f"[!] Failed to push to dashboard: {e}")
+
 class Exporter(Protocol):
     def setup(self) -> None:
         ...
@@ -93,3 +122,20 @@ class ExportToSQLite():
                 ImagePath TEXT NOT NULL,
                 isDeleted INTEGER
             )""")
+            
+class MultiExporter:
+    def __init__(self, exporters: list):
+        """
+        Allows pushing the same data to multiple destinations 
+        (e.g., CLI and the Dashboard simultaneously).
+        """
+        self.exporters = exporters
+
+    def export(self, data: List[ObjectData]) -> None:
+        for exporter in self.exporters:
+            try:
+                exporter.export(data)
+            except Exception as e:
+                # Catch errors so if the dashboard is offline, 
+                # the CLI still prints and the pipeline doesn't crash
+                print(f"[!] {exporter.__class__.__name__} failed: {e}")

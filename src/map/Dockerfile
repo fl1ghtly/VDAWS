@@ -3,4 +3,4 @@ WORKDIR /map
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY . .
-CMD ["python", "map.py"]
+CMD ["python", "dashboard.py"]
