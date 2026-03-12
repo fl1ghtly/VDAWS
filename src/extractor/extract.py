@@ -3,6 +3,7 @@ from pathlib import Path
 import shutil
 import requests
 import time
+import concurrent.futures
 import json
 import cv2
 import numpy as np
@@ -67,57 +68,77 @@ class Extractor:
         if (response.status_code != 200): return None
         return  response.json()
 
+    def extract_single(self, url: str, id: str, basepath: Path) -> dict | None:
+        try:
+            image = self.request_capture(url, timeout=self.timeout)
+            sensor_data = self.request_sensors(url, timeout=self.timeout)
+        except (TimeoutError, requests.exceptions.Timeout) as e:
+            print(f'Camera {url} timed out after {self.timeout} seconds')
+            print(e)
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f'Failed to reach camera {url}')
+            print(e)
+            return None
+        
+        # Check if requests were successful
+        if (image is None):
+            print(f'ERROR: Image capture request to {url} failed')
+            return None
+        if (sensor_data is None):
+            print(f'ERROR: Sensor Data request to {url} failed')
+            return None
+        
+        # Get the latest unprocessed image in 
+        # image_dir/{id}/preprocessed if it exists
+        preprocessed_path = basepath / 'preprocessed'
+        prev_img_path = get_latest_file(preprocessed_path)
+        
+        image_path = preprocessed_path / (str(sensor_data['timestamp']) + '.jpg')
+        cv2.imwrite(image_path, image)
+
+        # Only filter motion once two images exist at a time
+        if prev_img_path is None:
+            return None
+        
+        # Filter for motion and remove old unprocessed image
+        prev = cv2.imread(prev_img_path, cv2.IMREAD_COLOR)
+        filtered = filter_motion(prev, image, 250)
+        # Delete unprocessed image
+        os.remove(prev_img_path)
+        
+        # Save the filtered image
+        processed_path = basepath / 'processed' / (str(sensor_data['timestamp']) + '.jpg')
+        cv2.imwrite(processed_path, filtered)
+        
+        # Save sensor data and filtered image path to redis
+        sensor_data['camera_id'] = id
+        sensor_data['image_path'] = str(processed_path)
+
+        batch.append(sensor_data)
+        
     def extract_all(self) -> list[dict]:
         batch = []
-        for url, (id, basepath) in self.urls.items():
-            try:
-                image = self.request_capture(url, timeout=self.timeout)
-                sensor_data = self.request_sensors(url, timeout=self.timeout)
-            except (TimeoutError, requests.exceptions.Timeout) as e:
-                print(f'Camera {url} timed out after {self.timeout} seconds')
-                print(e)
-                continue
-            except requests.exceptions.RequestException as e:
-                print(f'Failed to reach camera {url}')
-                print(e)
-                continue
-            
-            # Check if requests were successful
-            if (image is None):
-                print(f'ERROR: Image capture request to {url} failed')
-                continue
-            if (sensor_data is None):
-                print(f'ERROR: Sensor Data request to {url} failed')
-                continue
-            
-            # Get the latest unprocessed image in 
-            # image_dir/{id}/preprocessed if it exists
-            preprocessed_path = basepath / 'preprocessed'
-            prev_img_path = get_latest_file(preprocessed_path)
-            
-            image_path = preprocessed_path / (str(sensor_data['timestamp']) + '.jpg')
-            cv2.imwrite(image_path, image)
-
-            # Only filter motion once two images exist at a time
-            if prev_img_path is None:
-                continue
-            
-            # Filter for motion and remove old unprocessed image
-            prev = cv2.imread(prev_img_path, cv2.IMREAD_COLOR)
-            filtered = filter_motion(prev, image, 250)
-            # Delete unprocessed image
-            os.remove(prev_img_path)
-            
-            # Save the filtered image
-            processed_path = basepath / 'processed' / (str(sensor_data['timestamp']) + '.jpg')
-            cv2.imwrite(processed_path, filtered)
-            
-            # Save sensor data and filtered image path to redis
-            sensor_data['camera_id'] = id
-            sensor_data['image_path'] = str(processed_path)
-
-            batch.append(sensor_data)
         
+        max_threads = len(self.urls) if len(self.urls) > 0 else 1
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
+            
+            # Submit all cameras to the pool simultaneously
+            future_to_url = {
+                executor.submit(self.extract_single, url, id, basepath): url
+                for url, (id, basepath) in self.urls.items()
+            }
+            
+            # As each camera finishes its process, collect the data
+            for future in concurrent.futures.as_completed(future_to_url):
+                url = future_to_url[future]
+                try:
+                    data = future.result()
+                    if data is not None:
+                        batch.append(data)
+                except Exception as exc:
+                    print(f'{url} generated an exception: {exc}')
+                    
         return batch
     
     def push_batch(self, batch: list[dict]) -> None:
