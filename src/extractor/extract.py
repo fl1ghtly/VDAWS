@@ -156,7 +156,7 @@ if __name__ == '__main__':
     # db_path = app_folder / config['db_name']
     # exporter = ExportToSQLite(db_path)
 
-    exporter = ExportToRedis(config['batcher']['stream_name'], max_queue_size=1000)
+    exporter = ExportToRedis(config['batcher']['stream_name'], max_queue_size=20)
 
     extractor = Extractor(image_dir, exporter, config['extractor']['request_timeout_sec'])
     

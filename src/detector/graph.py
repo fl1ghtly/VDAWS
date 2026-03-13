@@ -209,7 +209,7 @@ class Graph:
                                 point_size=self.point_size,
                                 name="point_cloud",
                                 clim=[0, max_value],
-                                # opacity='linear',
+                                opacity='linear',
                                 reset_camera=False)
     
     def _create_grid(self, voxel_grid: np.ndarray, origin: np.ndarray, voxel_size: np.ndarray):
