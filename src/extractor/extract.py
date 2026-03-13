@@ -115,7 +115,7 @@ class Extractor:
         sensor_data['camera_id'] = id
         sensor_data['image_path'] = str(processed_path)
 
-        batch.append(sensor_data)
+        return sensor_data
         
     def extract_all(self) -> list[dict]:
         batch = []
