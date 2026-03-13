@@ -1,4 +1,5 @@
 import sqlite3
+import requests
 from typing import Protocol, List
 from models import ObjectData
 
@@ -51,3 +52,41 @@ class ExportToSQLite:
 class ExportToCLI:
     def export(self, data: List[ObjectData]) -> None:
         print(data)
+
+class ExportToDashboard:
+    def __init__(self, dashboard_url: str):
+        self.dashboard_url = dashboard_url
+
+    def export(self, data: List[ObjectData]) -> None:
+        if not data:
+            return
+            
+        payload = {"objects": []}
+        for obj in data:
+            payload["objects"].append({
+                "id": obj.id,
+                "lat": obj.position[1], 
+                "lon": obj.position[0], 
+                "alt": obj.position[2] if len(obj.position) > 2 else 0.0,
+                "vx": obj.velocity[0] if len(obj.velocity) > 0 else 0.0,
+                "vy": obj.velocity[1] if len(obj.velocity) > 1 else 0.0,
+                "vz": obj.velocity[2] if len(obj.velocity) > 2 else 0.0
+            })
+            
+        try:
+            # Post data to dashboard
+            requests.post(self.dashboard_url, json=payload, timeout=2)
+        except requests.exceptions.RequestException as e:
+            print(f"[!] Failed to push to dashboard: {e}")
+
+class MultiExporter:
+    def __init__(self, exporters: list):
+        self.exporters = exporters
+
+    def export(self, data: List[ObjectData]) -> None:
+        for exporter in self.exporters:
+            try:
+                exporter.export(data)
+            except Exception as e:
+                # Catch errors to prevent pipeline crash if one exporter fails
+                print(f"[!] {exporter.__class__.__name__} failed: {e}")

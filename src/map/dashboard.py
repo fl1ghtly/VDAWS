@@ -9,6 +9,7 @@ import sys
 import os
 import numpy as np
 import time
+import json
 from flask import request, jsonify
 
 # --- SETUP PATHS ---
@@ -22,21 +23,19 @@ from collision_detector import CollisionDetector
 from scanning.remoteid_sniffer import run_sniffer_thread
 
 # --- CONFIGURATION ---
-# --- LOAD CONFIG ---
-# Adjust this path if dashboard.py is in a different folder than config.json
-config_path = os.path.join(current_dir, '../../config.json') 
+config_path = '/app/config.json'
 
 try:
     with open(config_path, 'r') as f:
         config = json.load(f)
-        # Grab the origin/min grid point from config to center the map
-        grid_min = config.get('voxel_tracer', {}).get('grid_min', [-122.43, 37.76])
+        grid_min = config.get('voxel_tracer', {}).get('grid_min', [-117.84, 33.64])
         CENTER_LON = grid_min[0]
         CENTER_LAT = grid_min[1]
 except Exception as e:
-    print(f"[WARNING] Could not load config.json for map center: {e}")
-    CENTER_LAT = 37.76
-    CENTER_LON = -122.43
+    print(f"[WARNING] Could not load config.json: {e}")
+    CENTER_LAT = 33.64
+    CENTER_LON = -117.84
+
 TOTAL_FRAMES = 100
 PATH_MOVEMENT_SCALE = 1.5 
 WIFI_INTERFACE = 'Wi-Fi' 
@@ -47,17 +46,20 @@ GRID_STATE = {
     "active": False
 }
 
+SYSTEM_STATE = {
+    "has_received_live_data": False
+}
+
 # --- INITIALIZE MANAGERS ---
 manager = ObjectManager(timeout_seconds=5)
 collision_detector = CollisionDetector(warning_radius_meters=150.0)
 
 # --- START SNIFFER ---
 try:
-    # Sniffer runs in the background and pushes straight to manager
     run_sniffer_thread(manager, interface=WIFI_INTERFACE)
     print(f"[SUCCESS] Sniffer thread started on {WIFI_INTERFACE}")
 except Exception as e:
-    print(f"[ERROR] Sniffer failed to start: {e}")
+    print(f"[ERROR] Sniffer failed: {e}")
 
 # --- SIMULATION DATA SETUP ---
 def generate_path_coordinates(steps):
@@ -91,24 +93,19 @@ server = app.server
 def update_parameters():
     try:
         data = request.get_json()
-        if not data:
-            return jsonify({"status": "error", "message": "No JSON data provided"}), 400
-            
         GRID_STATE["min"] = data.get("grid_min")
         GRID_STATE["max"] = data.get("grid_max")
         GRID_STATE["active"] = True
-        
-        return jsonify({"status": "success", "message": "Grid parameters updated"}), 200
+        return jsonify({"status": "success"}), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @server.route('/stream_objects', methods=['POST'])
 def stream_objects():
-    """Receives live object data pushed from importer.py"""
     try:
         data = request.get_json()
         if not data or 'objects' not in data:
-            return jsonify({"status": "error", "message": "Missing 'objects' key in JSON payload"}), 400
+            return jsonify({"status": "error"}), 400
             
         for obj in data['objects']:
             manager.update_object(
@@ -146,6 +143,8 @@ app.layout = dbc.Container([
                         dbc.Input(id='velocity-input', type='number', value=0, min=0, step=0.5),
                         dbc.Button("Update", id='velocity-btn', color="primary", n_clicks=0)
                     ], className="mb-3"),
+                    # NEW: Reset to Sim Button
+                    dbc.Button("Reset to Simulation", id='reset-sim-btn', color="warning", size="sm", className="w-100 mt-2")
                 ])
             ], className="mb-3"),
             dbc.Card([
@@ -163,7 +162,7 @@ app.layout = dbc.Container([
                         style_data_conditional=[{'if': {'row_index': 'odd'}, 'backgroundColor': '#383838'}]
                     )
                 ])
-            ], style={'height': '40vh', 'overflowY': 'scroll'})
+            ], style={'height': '35vh', 'overflowY': 'scroll'})
         ], width=4) 
     ]),
     dcc.Interval(id='interval-component', interval=500, n_intervals=0),
@@ -172,13 +171,24 @@ app.layout = dbc.Container([
 # --- CALLBACKS ---
 @app.callback(
     Output('filter-store', 'data'),
-    Input('velocity-btn', 'n_clicks'),
+    [Input('velocity-btn', 'n_clicks'),
+     Input('reset-sim-btn', 'n_clicks')],
     State('velocity-input', 'value')
 )
-def update_filter_store(n_clicks, value):
-    if value is None:
+def handle_inputs(v_clicks, r_clicks, v_value):
+    ctx = dash.callback_context
+    if not ctx.triggered:
         return 0
-    return float(value)
+    
+    button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    
+    if button_id == 'reset-sim-btn':
+        # Clear the manager and reset the persistent flag
+        manager.objects.clear()
+        SYSTEM_STATE["has_received_live_data"] = False
+        return 0
+        
+    return float(v_value) if v_value is not None else 0
 
 @app.callback(
     [Output('map-graph', 'figure'),
@@ -192,25 +202,32 @@ def update_filter_store(n_clicks, value):
 )
 def update_dashboard(n, min_velocity):
     active_objects = manager.get_active_objects()
-    is_live = False
-    status_text, status_color = "● SIMULATION MODE", "#ffaa00" 
-    badge_text, badge_class = "SIM", "badge bg-warning text-dark ms-2"
-
-    if active_objects:
-        is_live = True
+    
+    # Stay in Live Mode if data was ever seen
+    if active_objects or SYSTEM_STATE["has_received_live_data"]:
+        if active_objects:
+            SYSTEM_STATE["has_received_live_data"] = True
+            
         status_text, status_color = f"● LIVE TRACKING ({len(active_objects)} detected)", "#00ff00"
         badge_text, badge_class = "LIVE", "badge bg-danger ms-2"
+        visible_objects = [obj for obj in active_objects if obj.average_speed >= min_velocity]
+        is_live = True
     else:
+        # Fallback to simulation
         frame_idx, next_frame_idx = int(n) % TOTAL_FRAMES, (int(n) + 1) % TOTAL_FRAMES
         for i, drone in enumerate(simulated_drones):
             target_pos, future_pos = path_data[i][frame_idx], path_data[i][next_frame_idx]
             dx, dy, dz = (future_pos[0] - target_pos[0]) * 111000, (future_pos[1] - target_pos[1]) * 88000, (future_pos[2] - target_pos[2])
             drone.set_position(target_pos[0], target_pos[1], target_pos[2])
             drone.set_velocity(dx * 5, dy * 5, dz * 5)
+        
         active_objects = simulated_drones
+        visible_objects = [obj for obj in active_objects if obj.average_speed >= min_velocity]
+        status_text, status_color = "● SIMULATION MODE", "#ffaa00" 
+        badge_text, badge_class = "SIM", "badge bg-warning text-dark ms-2"
+        is_live = False
 
     collision_events = collision_detector.detect_collisions(active_objects)
-    visible_objects = [obj for obj in active_objects if obj.average_speed >= min_velocity]
     
     node_data, trail_lats, trail_lons = [], [], []
     for obj in visible_objects:
@@ -226,10 +243,10 @@ def update_dashboard(n, min_velocity):
     df_nodes = pd.DataFrame(node_data)
     center_lat = df_nodes['lat'].mean() if is_live and not df_nodes.empty else CENTER_LAT
     center_lon = df_nodes['lon'].mean() if is_live and not df_nodes.empty else CENTER_LON
-    zoom_level = 14 if is_live and not df_nodes.empty else 13
+    zoom_level = 15 if is_live and not df_nodes.empty else 13
 
     if df_nodes.empty:
-        fig = px.scatter_map(lat=[CENTER_LAT], lon=[CENTER_LON], zoom=12)
+        fig = px.scatter_map(lat=[CENTER_LAT], lon=[CENTER_LON], zoom=zoom_level)
     else:
         fig = px.scatter_map(
             df_nodes, lat="lat", lon="lon", color="alt", size="size",
@@ -239,47 +256,30 @@ def update_dashboard(n, min_velocity):
         )
 
     if GRID_STATE["active"] and GRID_STATE["min"] and GRID_STATE["max"]:
-        min_x, min_y = GRID_STATE["min"]
-        max_x, max_y = GRID_STATE["max"]
-        box_x = [min_x, max_x, max_x, min_x, min_x]
-        box_y = [min_y, min_y, max_y, max_y, min_y]
-        
+        min_p, max_p = GRID_STATE["min"], GRID_STATE["max"]
         fig.add_trace(go.Scattermap(
-            lat=[CENTER_LAT + (x / 111000) for x in box_x],
-            lon=[CENTER_LON + (y / 88000) for y in box_y],
+            lat=[min_p[1], max_p[1], max_p[1], min_p[1], min_p[1]],
+            lon=[min_p[0], min_p[0], max_p[0], max_p[0], min_p[0]],
             mode='lines', line=dict(width=2, color='#00FF00', dash='dot'), 
-            name='Detection Grid', hoverinfo='none'
+            name='Detection Grid'
         ))
 
     if trail_lats:
         fig.add_trace(go.Scattermap(
             lat=trail_lats, lon=trail_lons, mode='lines',
-            line=dict(width=2, color='cyan'), hoverinfo='skip', name='Trail (5s)'
+            line=dict(width=2, color='cyan'), name='Trail (5s)'
         ))
 
-    if collision_events:
-        lats, lons = [], []
-        obj_map = {obj.id: obj for obj in active_objects}
-        for event in collision_events:
-             if event.drone_a_id in obj_map and event.drone_b_id in obj_map:
-                d1, d2 = obj_map[event.drone_a_id], obj_map[event.drone_b_id]
-                lats.extend([d1.x, d2.x, None])
-                lons.extend([d1.y, d2.y, None])
-        fig.add_trace(go.Scattermap(lat=lats, lon=lons, mode='lines', line=dict(width=4, color='red'), name='Collision'))
-
-    fig.update_layout(map_style="carto-darkmatter", margin={"r":0, "t":0, "l":0, "b":0}, showlegend=False, uirevision='constant_loop')
+    fig.update_layout(map_style="carto-darkmatter", margin={"r":0, "t":0, "l":0, "b":0}, showlegend=False, uirevision='constant')
 
     table_data = [{"id": str(obj.id), "alt": f"{obj.altitude:.1f}", "spd": f"{obj.average_speed:.1f}"} for obj in visible_objects]
     status_html = html.Span(status_text, style={'color': status_color, 'fontWeight': 'bold'})
     
     alert_html = ""
     if collision_events:
-        alert_html = html.Div([
-            html.I(className="bi bi-exclamation-triangle-fill me-2"),
-            f"WARNING: {len(collision_events)} Potential Collisions!"
-        ], style={'color': 'red', 'fontWeight': 'bold', 'animation': 'blinker 1s linear infinite'})
+        alert_html = html.Div(f"WARNING: {len(collision_events)} Potential Collisions!", style={'color': 'red', 'fontWeight': 'bold'})
 
     return fig, table_data, status_html, alert_html, badge_text, badge_class
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8050)
+    app.run(host='0.0.0.0', debug=True, port=8050)

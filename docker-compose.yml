@@ -2,30 +2,54 @@ services:
   extractor:
     build: ./src/extractor
     environment:
-      - PYTHONUNBUFFERED=1  # Print logs with buffering them
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/src  # <-- Add this to tell Python where to look
     volumes:
       - ./shared:/app
       - ./config.json:/app/config.json
+      - ./src/extractor:/src/extractor
+      - ./src/models:/src/models:ro  # <-- Add this to mount the models folder
     depends_on:
       - redis
     restart: on-failure
+
   detector:
     build: ./src/detector
     environment:
       - PYTHONUNBUFFERED=1
+    command: ["fastapi", "dev", "pipeline.py", "--port", "80", "--host", "0.0.0.0"]
     volumes:
       - ./shared:/app
       - ./src/models:/src/models:ro
       - ./config.json:/app/config.json
+      - ./src/detector:/src/detector 
     depends_on:
       - redis
       - extractor
     ports:
-      - 80:80 # webserver
-      - 8080:8080 # trame/pyvista plotting
-  # map:
-  #   build: ./src/map
+      - 80:80
+      - 8080:8080
+
+  map:
+    build: ./src/map
+    environment:
+      - PYTHONUNBUFFERED=1
+    # Assuming your map Dockerfile uses WORKDIR /map
+    command: ["python", "dashboard.py"]
+    volumes:
+      - ./shared:/app
+      - ./config.json:/app/config.json
+      # Mount the map source code
+      - ./src/map:/map
+      # Mount the sniffer module so dashboard.py can import it
+      - ./src/scanning:/map/scanning
+    depends_on:
+      - detector
+    ports:
+      - 8050:8050
+
   redis:
     image: redis:alpine
+
 volumes:
   shared:

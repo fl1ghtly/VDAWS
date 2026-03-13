@@ -4,3 +4,4 @@ plotly>=6.4.0
 flask>=3.1.2
 grpcio>=1.76.0
 pandas>=2.2.3
+dash-bootstrap-components

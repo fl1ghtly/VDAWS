@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import math
+import time
 from queue import Queue, Empty
 import threading
 import json
@@ -8,7 +9,6 @@ import asyncio
 import cv2
 import traceback
 from contextlib import asynccontextmanager
-from extractor.exporter import ExportToDashboard
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -35,7 +35,7 @@ class DataPipeline:
         self.graph = graph
         if graph:
             self.graph.show()
-        self.is_running = False
+        self.active_clients = 0
         self.origin_lonlat: np.ndarray | None = None
         self.min_cameras = 0
         self.confidence = 0
@@ -115,7 +115,10 @@ class DataPipeline:
 
         print("Detector System running in background...")
         while True:
-            if not self.is_running: continue
+            # --- REMOVED THE ACTIVE CLIENT GUARD ---
+            # This ensures the pipeline runs even if no one is 
+            # watching the raw /stream JSON endpoint.
+            
             try:
                 objects = self.run()
 
@@ -125,6 +128,10 @@ class DataPipeline:
                     data_queue.put(data)
             except Exception as e:
                 print(f'Pipeline error: {traceback.print_exc()}')
+            
+            # Add a tiny sleep to prevent CPU 100% usage if 
+            # the queue is empty or processing is instant
+            time.sleep(0.01)
 
 def lonlat_to_local_meters(target_lonlat: np.ndarray, origin_lonlat: np.ndarray) -> np.ndarray:
     """
@@ -172,7 +179,12 @@ class DetectorParameters(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle lifespan of FastAPI app from startup to end"""
-    # App start
+    # Initialize graph only inside the worker process to avoid port collision
+    pipeline.graph = dt.Graph()
+    pipeline.graph.show()
+
+    await update_parameters(init_settings)
+
     thread = threading.Thread(target=pipeline.run_continously, daemon=True)
     thread.start()
 
@@ -180,30 +192,33 @@ async def lifespan(app: FastAPI):
     yield
     
     # On app stop
-    pipeline.is_running = False
-    thread.join()
+    pipeline.active_clients = 0
+    thread.join(timeout=1.0)
     
 api_app = FastAPI(lifespan=lifespan)
 data_queue: Queue[dict] = Queue(maxsize=20)
 
 async def event_generator(request: Request):
     """Generate SSE formatted strings"""
-    pipeline.is_running = True
-    print("Stream requested, starting detection")
-    while True:
-        # Check if frontend is disconnected to stop generating
-        if await request.is_disconnected():
-            pipeline.is_running = False
-            break
-        
-        try:
-            # Don't block thread running data processing
-            data = data_queue.get_nowait()
-            # SSE format is 'data: <contents>\n\n'
-            yield f'data: {json.dumps(data, cls=NumpyEncoder)}\n\n'
-        except Empty:
-            # Wait some time for data to arrive
-            await asyncio.sleep(0.1)
+    pipeline.active_clients += 1
+    print(f"Stream requested, starting detection. Active clients: {pipeline.active_clients}")
+    try:
+        while True:
+            # Check if frontend is disconnected to stop generating
+            if await request.is_disconnected():
+                break
+            
+            try:
+                # Don't block thread running data processing
+                data = data_queue.get_nowait()
+                # SSE format is 'data: <contents>\n\n'
+                yield f'data: {json.dumps(data, cls=NumpyEncoder)}\n\n'
+            except Empty:
+                # Wait some time for data to arrive
+                await asyncio.sleep(0.1)
+    finally:
+        pipeline.active_clients -= 1
+        print(f"Client disconnected. Active clients: {pipeline.active_clients}")
 
 @api_app.get('/stream')
 async def get_stream(request: Request):
@@ -276,10 +291,6 @@ async def get_cameras(request: Request):
 with open(Path('/app') / 'config.json', 'r') as f:
     config: dict = json.load(f)
 
-# db_path = Path('/app') / config['db_name']
-# batcher = dt.SQLiteBatcher(db_path, 0.5, soft_delete=True)
-# exporter = dt.ExportToSQLite(db_path)
-
 batcher = dt.RedisBatcher(config['batcher']['stream_name'])
 voxel_tracer = dt.VoxelTracer()
 cluster_tracker = dt.ClusterTracker(
@@ -287,14 +298,15 @@ cluster_tracker = dt.ClusterTracker(
     int(config['cluster_tracker']['max_cluster_age'])
 )
 # Create the individual exporters
-DASHBOARD_URL = "http://127.0.0.1:8050/stream_objects"
+DASHBOARD_URL = "http://map:8050/stream_objects"
 dashboard_exporter = dt.ExportToDashboard(DASHBOARD_URL)
 cli_exporter = dt.ExportToCLI()
 
 # Combine them!
 exporter = dt.MultiExporter([cli_exporter, dashboard_exporter])
-graph = dt.Graph()
-pipeline = DataPipeline(batcher, voxel_tracer, cluster_tracker, exporter, graph)
+
+# Initialize without the graph (it will be attached safely during lifespan startup)
+pipeline = DataPipeline(batcher, voxel_tracer, cluster_tracker, exporter, graph=None)
 
 # TODO temporary setup for debugging
 init_settings = DetectorParameters(
@@ -305,6 +317,3 @@ init_settings = DetectorParameters(
     min_cameras=config['voxel_tracer']['min_cameras'],
     confidence=config['voxel_tracer']['confidence']
 )
-asyncio.run(update_parameters(init_settings))
-    
-lifespan(api_app)
